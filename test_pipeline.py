@@ -5,6 +5,7 @@ from src.geomatry.conversion import vertical_to_ground_angle
 from src.config.constants import ANGLE_TOLERANCE_DEG
 
 
+#class to calculate angles from cvat keypoints
 
 ANNOTATION_FILE = "data/annotations/cvat/person_keypoints_default.json"
 

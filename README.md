@@ -124,3 +124,10 @@ python demo/inference_on_new_image.py /home/chetan/Desktop/demo.jpeg
 
 To check the angles of any image:(to compare what you draw on cvat and what device reading says.)
 test_pipeline.py
+
+To add mmpose as submodule:
+git submodule add https://github.com/open-mmlab/mmpose.git mmpose
+
+**Never do git add . on main dir. rather add mmpoe changes seperataly and main chaanges seperate. This will keep our git clean.
+
+# we have change some code in mmpose/datasets/transforms/common_transforms.py ->  to make it work for our project. So whenever you update mmpose, make sure to update this file as well.

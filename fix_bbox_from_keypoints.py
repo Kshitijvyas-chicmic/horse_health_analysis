@@ -1,3 +1,5 @@
+#class to fix bbox from keypoints, increase bbox size and remove noise and save it to a new json file
+
 import json
 import sys
 from pathlib import Path
