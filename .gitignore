@@ -1,0 +1,13 @@
+.env
+.env_mmpose
+/env
+__pycache__/
+/env_mmpose
+cache/
+.cache/
+~./cache
+.ipynb_checkpoints
+.pytest_cache/
+~/.bash
+data/
+.ds_store

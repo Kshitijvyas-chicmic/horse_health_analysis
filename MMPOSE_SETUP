@@ -1,0 +1,16 @@
+Inside your Main project
+git clone https://github.com/open-mmlab/mmpose.git
+
+#to make it ediatble Make sure you are inside mmpose dir
+cd mmpose
+pip install -v -e .
+
+
+We put hoofs dir inside mmpose/mmpose/configs
+IN Hoofs dir we put :
+1. hoof.4kp.py
+2. rtmpose_hoof._4kp.py
+
+
+#we will run the training like:
+(env_mmpose_env) chetan@chetan-MS-7D46:~/AI_First/horse_health_analysis/horse_health_analysis/mmpose
