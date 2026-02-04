@@ -28,5 +28,5 @@ class AdvancedScanResponse(BaseModel):
     scanScore: Optional[float] = None
     quality: int = 1
     notes: str
-    status: int = 1
-    scanId: str = "#SCN001"
+    #status: int = 1
+    #scanId: str = "#SCN001"

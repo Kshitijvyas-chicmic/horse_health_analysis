@@ -83,6 +83,6 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         scanScore=aggregation["scanScore"],
         notes=aggregation["notes"],
         quality=1,      # Static for now
-        status=1,       # Static for now
-        scanId="#SCN001" # Static for now
+        #status=1,       # Static for now
+        #scanId="#SCN001" # Static for now
     )
