@@ -1,4 +1,3 @@
-.
 
 📐 Angle Measurement Methodology
 
@@ -103,10 +102,49 @@ this will make new json with name val_fixed.json and train_fixed.json
 
 This is required as our curent bbox is tight and very close to the data points hence making difficult for rtmpose traning.
 
-TRANING:
+---
 
-1. python tools/train.py custom_configs/rtmpose_hoof_4kp.py
-2. change the settings inside rtmpose_hoof_4kp.py accordingly like epoch
+## 🚀 Model Hub (Checkpoints)
+
+We provide two distinct models depending on your clinical requirements:
+
+| Model | Checkpoint | Training | Best For |
+| :--- | :--- | :--- | :--- |
+| **Baseline** | `work_dirs/rtmpose_hoof_4kp_portrait/epoch_100.pth` | 100 Epochs | Super-expert precision on perfectly leveled photos. |
+| **Stabilized** | `work_dirs/rtmpose_hoof_4kp_clinical_stabilization/epoch_300.pth` | 300 Epochs | **Clinical Calibration**: Detects real pathologies and handles image tilt (10° rotation invariant). |
+
+---
+
+## 🛠️ Inference Tools
+
+### 1. Production Inference (Recommended)
+Use this for final clinical reports. It features calibrated math and zero-overshoot visualization.
+```bash
+python demo/inference_on_new_image_refined.py /path/to/image.jpg
+```
+- **Config**: `custom_configs/rtmpose_hoof_4kp_copy.py`
+- **Output**: `output_inference.jpg` (Segmented joints + Clinical HPA Dev)
+
+### 2. Vanguard Scan (Baseline)
+Use this as a baseline audit tool.
+```bash
+python demo/inference_on_new_image.py /path/to/image.jpg
+```
+
+---
+
+## 🏋️ Training (Advanced)
+
+To retrain the model with Geometric Invariance (Random Rotation):
+
+1. **Configure**: Use `custom_configs/rtmpose_hoof_4kp_copy.py`.
+2. **Parameters**:
+   - `rotate_factor=10`: Decouples anatomy from image orientation (Geometric Invariance).
+   - `max_epochs=300`: Allows the joint localization to "settle" for clinical precision.
+3. **Run**:
+```bash
+python tools/train.py custom_configs/rtmpose_hoof_4kp_copy.py --work-dir work_dirs/rtmpose_hoof_4kp_clinical_stabilization
+```
 
 To visualise the traning result on any image:
 
@@ -118,7 +156,7 @@ To remove traning data run below command: As traning data is saved in work_dirs 
 
 rm -rf work_dirs/rtmpose_hoof_4kp/*
 
-To run the inference on any image:
+To run the baseline inference:
 python demo/inference_on_new_image.py /home/chetan/Desktop/demo.jpeg
 
 
@@ -128,6 +166,11 @@ test_pipeline.py
 To add mmpose as submodule:
 git submodule add https://github.com/open-mmlab/mmpose.git mmpose
 
-**Never do git add . on main dir. rather add mmpoe changes seperataly and main chaanges seperate. This will keep our git clean.
+**Never do git add . on main dir. rather add mmpose changes seperataly and main chaanges seperate. This will keep our git clean.
 
 # we have change some code in mmpose/datasets/transforms/common_transforms.py ->  to make it work for our project. So whenever you update mmpose, make sure to update this file as well.
+
+Run `inference_on_new_image_refined.py` to get the clinical angles of any new image with high precision.
+
+TO split the new json in train and val:
+ python3 /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/split_dataset.py --input /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_590.json --train_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/train_590.json --val_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/val_590.json --ratio 0.85
