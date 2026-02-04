@@ -166,8 +166,11 @@ test_pipeline.py
 To add mmpose as submodule:
 git submodule add https://github.com/open-mmlab/mmpose.git mmpose
 
-**Never do git add . on main dir. rather add mmpoe changes seperataly and main chaanges seperate. This will keep our git clean.
+**Never do git add . on main dir. rather add mmpose changes seperataly and main chaanges seperate. This will keep our git clean.
 
 # we have change some code in mmpose/datasets/transforms/common_transforms.py ->  to make it work for our project. So whenever you update mmpose, make sure to update this file as well.
 
 Run `inference_on_new_image_refined.py` to get the clinical angles of any new image with high precision.
+
+TO split the new json in train and val:
+ python3 /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/split_dataset.py --input /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_590.json --train_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/train_590.json --val_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/val_590.json --ratio 0.85

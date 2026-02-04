@@ -8,9 +8,9 @@ from pathlib import Path
 # BOTTOM_MARGIN = 0.10
 # SIDE_MARGIN = 0.25
 
-TOP_MARGIN = 0.08
-BOTTOM_MARGIN = 0.05
-SIDE_MARGIN = 0.12
+TOP_MARGIN = 0.15
+BOTTOM_MARGIN = 0.10
+SIDE_MARGIN = 0.20
 
 def fix_coco_bboxes(coco_path, out_path=None):
     with open(coco_path, "r") as f:

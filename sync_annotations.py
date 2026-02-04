@@ -55,7 +55,7 @@ def sync_annotations(source_path, target_path):
     print(f"  - Synchronized {match_count} annotations from refined source.")
 
 if __name__ == "__main__":
-    REFINED_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_refined.json"
+    REFINED_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_6_jan.json"
     VAL_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/val.json"
     TRAIN_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/train.json"
     

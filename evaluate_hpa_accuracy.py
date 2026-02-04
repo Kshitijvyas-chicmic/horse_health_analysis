@@ -33,8 +33,9 @@ def calculate_hpa_metrics(keypoints):
         for i in range(4):
             pts[i][0] = 2 * center_x - pts[i][0]
     
-    v_pastern = (pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
-    v_hoof = (pts[3][0] - pts[2][0], pts[3][1] - pts[2][1])
+    # Vectors (Top - Bottom)
+    v_pastern = (pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])
+    v_hoof = (pts[2][0] - pts[3][0], pts[2][1] - pts[3][1])
     
     p_angle = clinical_angle(angle_from_vertical(v_pastern))
     h_angle = clinical_angle(angle_from_vertical(v_hoof))
@@ -42,8 +43,8 @@ def calculate_hpa_metrics(keypoints):
 
 def main():
     register_all_modules()
-    config = 'mmpose/custom_configs/rtmpose_hoof_4kp.py'
-    checkpoint = 'mmpose/work_dirs/rtmpose_hoof_4kp_portrait/epoch_100.pth'
+    config = 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'
+    checkpoint = 'mmpose/work_dirs/rtmpose_hoof_590_manual_rotation_jan9/epoch_300.pth'
     
     print("🚀 Initializing model for evaluation...")
     from mmengine.config import Config
@@ -51,8 +52,8 @@ def main():
     cfg.model.test_cfg.flip_test = True
     model = init_model(cfg, checkpoint, device='cpu')
     
-    val_json = 'data/annotations/val_fixed.json'
-    img_dir = 'data/images/val'
+    val_json = 'data/annotations/val_590_fixed.json'
+    img_dir = 'data/images/hq_consolidation_550'
     with open(val_json, 'r') as f:
         data = json.load(f)
     
@@ -68,7 +69,11 @@ def main():
         img_path = os.path.join(img_dir, file_name)
         
         # Get GT keypoints and bbox
-        ann = [a for a in data['annotations'] if a['image_id'] == img_id][0]
+        anns = [a for a in data['annotations'] if a['image_id'] == img_id]
+        if not anns:
+            print(f"Warning: No annotation found for image {file_name} (ID: {img_id})")
+            continue
+        ann = anns[0]
         gt_kpts = np.array(ann['keypoints']).reshape(-1, 3)[:, :2]
         gt_p, gt_h, gt_dev = calculate_hpa_metrics(gt_kpts)
         
@@ -85,6 +90,9 @@ def main():
             
         res = inference_topdown(model, img, bboxes=bbox_xyxy[None, :])[0]
         pred_kpts = res.pred_instances.keypoints[0]
+        pred_scores = res.pred_instances.keypoint_scores[0]
+        avg_score = np.mean(pred_scores)
+        
         pred_p, pred_h, pred_dev = calculate_hpa_metrics(pred_kpts)
         
         err_p = abs(gt_p - pred_p)
@@ -119,6 +127,7 @@ def main():
 
         results.append({
             'Image': file_name,
+            'AI_Confidence': round(float(avg_score), 4),
             'GT_Pastern_Angle': round(gt_p, 2),
             'Pred_Pastern_Angle': round(pred_p, 2),
             'Pastern_Error': round(err_p, 2),
