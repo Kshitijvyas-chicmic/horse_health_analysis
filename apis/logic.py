@@ -50,6 +50,10 @@ class HPAPredictor:
         self.MODEL_RATIO = 192 / 256
         
     def predict(self, img_bytes):
+        # Prevent empty or None buffers
+        if not img_bytes:
+            raise ValueError("Empty image buffer provided")
+            
         # Convert bytes to cv2 image
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)

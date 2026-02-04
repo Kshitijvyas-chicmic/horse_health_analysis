@@ -26,7 +26,7 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
     leg_scores = []
 
     for leg_key, image_input in legs.items():
-        if image_input is None:
+        if not image_input: # Handles None and empty string ""
             results[f"{leg_key}ScanScore"] = None
             results[f"{leg_key}Notes"] = None
             results[f"{leg_key}Quality"] = None
