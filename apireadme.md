@@ -14,25 +14,51 @@ This API provides tools for analyzing horse limb health from images, specificall
 conda create -n env_mmpose_env python=3.10 -y
 conda activate env_mmpose_env
 
-# 1. Update core build tools
+# Update core build tools
 pip install --upgrade pip setuptools wheel
+```
 
-# 2. Install dependencies (pip is recommended for this project)
+#### Option A: Production/Inference (Lightweight - CPU Only)
+Recommended for your 4-core production server. This version is small and fast to install.
+```bash
 pip install -r requirements.txt
+```
+
+#### Option B: Development/Training (Full - GPU Required)
+Required only for training new models on a GPU-enabled machine. 
+*Note: This requires the CUDA index URL for PyTorch.*
+```bash
+pip install -r requirements-train.txt --find-links https://download.pytorch.org/whl/torch_stable.html
 ```
 
 > [!TIP]
 > **If you encounter build errors (like "chumpy" or "xtcocotools"):**
-> I have removed `chumpy` from the requirements as it's not needed for our RTMPose inference. If you still see errors, try installing the package individually with `pip install --no-build-isolation <package_name>`.
+> The lightweight `requirements.txt` removes `chumpy` as it's not needed for inference. If you still see errors in the full setup, try installing the package individually with `pip install --no-build-isolation <package_name>`.
 
 ### 3. Model Dependencies
 Ensure `mmpose` is available as a submodule and the checkpoints exist in `mmpose/work_dirs/`.
 
 ## Running the Server
 
-Start the FastAPI server using `uvicorn`:
+### Local Development
 ```bash
 uvicorn apis.main:app --host 0.0.0.0 --port 8001
+```
+
+### Production (Recommended)
+For production servers (like your HTTPS setup), use **Gunicorn** with Uvicorn workers. This allows for multiple worker processes and better stability.
+
+```bash
+# Kill any existing process on 8000
+fuser -k 8000/tcp
+
+# Start with Gunicorn (4 workers recommended for most servers)
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker apis.main:app --bind 0.0.0.0:8000 --access-log - --error-log -
+```
+
+*Note: If Gunicorn is not available, you can still use Uvicorn with proxy flags:*
+```bash
+uvicorn apis.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
 ```
 
 ### Server Lifecycle
@@ -43,7 +69,7 @@ uvicorn apis.main:app --host 0.0.0.0 --port 8001
 
 You can interactively test the API endpoints (send "write" requests) using the built-in Swagger UI:
 
-🔗 **[Interactive API Docs](http://192.180.3.178:8001/docs)**
+🔗 **[Interactive API Docs](https://horse-health.projectlabs.in/docs)**
 
 Here you can use the **"Try it out"** button to upload images or send batch URLs and see immediate results.
 
@@ -130,8 +156,8 @@ For production, use **Gunicorn** with **Uvicorn workers** for better stability a
 ```bash
 conda activate env_mmpose_env
 pip install gunicorn
-# Run with 2 workers (or more depending on CPU cores)
-gunicorn apis.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001 --timeout 120
+# Run with 4 workers (or more depending on CPU cores)
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker apis.main:app --bind 0.0.0.0:8000 --timeout 120
 ```
 
 ### 3. Using Systemd (Auto-restart)
@@ -194,7 +220,7 @@ Follow this order to ensure a smooth transition to your client's production serv
    conda create -n env_mmpose_env python=3.10 -y
    conda activate env_mmpose_env
    pip install -r requirements.txt
-   # gunicorn is included in requirements.txt
+   # gunicorn is now included in requirements.txt
    ```
 
 3. **Sync Model Weights**:
@@ -202,8 +228,8 @@ Follow this order to ensure a smooth transition to your client's production serv
    > Model weights (`.pth` files) are NOT in Git. You must manually copy the `mmpose/work_dirs/` folder from this server to the production server at the exact same path.
 
 4. **Firewall & Port**:
-   - Open port **8001** for incoming TCP traffic.
-   - If using a reverse proxy (like Nginx), you might use port 80/443 pointing to 8001.
+   - Open port **8000** for incoming TCP traffic.
+   - If using a reverse proxy (like Nginx), you might use port 80/443 pointing to 8000.
 
 5. **Security Update**:
    - Open `apis/main.py`.

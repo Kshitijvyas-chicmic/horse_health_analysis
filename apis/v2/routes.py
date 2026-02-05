@@ -22,21 +22,42 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         "backRight": request.backRightLateral
     }
 
+    # 1. Fetch all images concurrently
+    import asyncio
+    
     results = {}
-    leg_scores = []
-
+    leg_keys = []
+    fetch_tasks = []
+    
     for leg_key, image_input in legs.items():
-        if not image_input: # Handles None and empty string ""
+        if image_input:
+            leg_keys.append(leg_key)
+            fetch_tasks.append(get_image_bytes(image_input))
+        else:
             results[f"{leg_key}ScanScore"] = None
             results[f"{leg_key}Notes"] = None
             results[f"{leg_key}Quality"] = None
-            continue
 
+    # Run downloads in parallel
+    print(f"📡 Downloading {len(fetch_tasks)} images concurrently...")
+    downloaded_images = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+    
+    # Map downloaded bytes back to leg keys for inference
+    leg_data = {}
+    for i, leg_key in enumerate(leg_keys):
+        result = downloaded_images[i]
+        if isinstance(result, Exception):
+            print(f"❌ Download failed for {leg_key}: {result}")
+            results[f"{leg_key}ScanScore"] = None
+            results[f"{leg_key}Notes"] = f"Download failed: {str(result)}"
+            results[f"{leg_key}Quality"] = None
+        else:
+            leg_data[leg_key] = result
+
+    # 2. Sequential Inference (CPU intensive, so keep sequential to avoid thrashing)
+    leg_scores = []
+    for leg_key, img_bytes in leg_data.items():
         try:
-            # 1. Get Image
-            img_bytes = await get_image_bytes(image_input)
-            
-            # 2. Inference
             prediction = run_leg_inference(predictor, img_bytes)
             
             if not prediction.get("success"):
@@ -59,7 +80,7 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
             results[f"{leg_key}Notes"] = notes
             results[f"{leg_key}Quality"] = quality
             
-            # Log Results for Validation
+            # Log Detailed Results for Validation
             print(f"📊 Leg Result [{leg_key}]:")
             print(f"   - pastern_angle: {p_angle:.2f}")
             print(f"   - hoof_angle: {h_angle:.2f}")
@@ -70,12 +91,12 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
             leg_scores.append(score)
 
         except Exception as e:
-            print(f"❌ Error analyzing {leg_key}: {traceback.format_exc()}")
+            print(f"❌ Error during inference for {leg_key}: {traceback.format_exc()}")
             results[f"{leg_key}ScanScore"] = None
-            results[f"{leg_key}Notes"] = f"Error: {str(e)}"
+            results[f"{leg_key}Notes"] = f"Inference error: {str(e)}"
             results[f"{leg_key}Quality"] = None
 
-    # 5. Aggregate Overall
+    # 3. Aggregate
     aggregation = aggregate_scan(leg_scores)
     
     return AdvancedScanResponse(
