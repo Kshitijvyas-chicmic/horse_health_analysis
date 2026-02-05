@@ -15,16 +15,33 @@ from apis.v2.routes import router as analyze_v2_router
 app = FastAPI(
     title="Horse Health Analysis API",
     description="API for detecting horse hoof and pastern keypoints and calculating HPA metrics.",
-    version="1.0.0"
+    version="1.0.2",
+    servers=[
+        {"url": "https://horse-health.projectlabs.in", "description": "Production server"},
+        {"url": "http://localhost:8000", "description": "Local development server"}
+    ],
+    redirect_slashes=False  # CRITICAL: Prevent 307 redirects which break CORS preflights
 )
 
-# CORS Configuration
+# 1. Proxy Support (Inner Middleware)
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# 2. Request Logging
+@app.middleware("http")
+async def log_requests(request, call_next):
+    print(f"📡 Request: {request.method} {request.url}")
+    return await call_next(request)
+
+# 3. CORS Middleware (Outer Middleware - Added LAST)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Configuration
@@ -32,7 +49,7 @@ CONFIG_PATH = 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/rtmpose_hoof_unified_
 CHECKPOINT_PATH = 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth'
 DEVICE = 'cpu'
 
-# Initialize predictor at startup and store in app state
+# Initialize predictor
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Initializing HPAPredictor...")
@@ -44,8 +61,14 @@ async def startup_event():
         app.state.predictor = None
 
 @app.get("/", tags=["Health"])
+@app.get("/ping", tags=["Health"])
 async def root():
-    return {"message": "Horse Health Analysis API is running", "status": "stable", "version": "1.0.0"}
+    return {
+        "message": "Horse Health Analysis API is running", 
+        "status": "stable", 
+        "version": "1.0.2",
+        "last_updated": "2026-02-05 16:15"
+    }
 
 # Include versioned routers
 app.include_router(analyze_router, prefix="/api/v1", tags=["Analysis V1"])
@@ -79,4 +102,4 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8000, proxy_headers=True, forwarded_allow_ips="*")
