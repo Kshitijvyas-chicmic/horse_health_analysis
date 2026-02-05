@@ -172,13 +172,24 @@ fuser -k 8001/tcp
 
 Follow this order to ensure a smooth transition to your client's production server:
 
-1. **Clone the Repository**:
+1. **Clone the Repository (with Submodules)**:
+   > [!IMPORTANT]
+   > `mmpose` is a Git Submodule. You MUST use the `--recursive` flag or the folder will be empty.
    ```bash
-   git clone https://github.com/Kshitijvyas-chicmic/horse_health_analysis.git
+   git clone --recursive https://github.com/Kshitijvyas-chicmic/horse_health_analysis.git
    cd horse_health_analysis
    ```
+   *If you already cloned without submodules, run:*
+   `git submodule update --init --recursive`
 
-2. **Setup Environment**:
+2. **Sync Model Weights (Manual Step)**:
+   > [!WARNING]
+   > Model weights (`.pth` files) are EXCLUDED from Git to keep the repo size small.
+   - **Step A**: On the development server, go to `mmpose/work_dirs/`.
+   - **Step B**: Zip or SCP the folder to the production server.
+   - **Step C**: Place it at `horse_health_analysis/mmpose/work_dirs/rtmpose_hoof_unified_jan12/`.
+
+3. **Setup Environment**:
    ```bash
    conda create -n env_mmpose_env python=3.10 -y
    conda activate env_mmpose_env
