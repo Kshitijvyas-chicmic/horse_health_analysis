@@ -13,8 +13,17 @@ This API provides tools for analyzing horse limb health from images, specificall
 ```bash
 conda create -n env_mmpose_env python=3.10 -y
 conda activate env_mmpose_env
+
+# 1. Update core build tools
+pip install --upgrade pip setuptools wheel
+
+# 2. Install dependencies (pip is recommended for this project)
 pip install -r requirements.txt
 ```
+
+> [!TIP]
+> **If you encounter build errors (like "chumpy" or "xtcocotools"):**
+> I have removed `chumpy` from the requirements as it's not needed for our RTMPose inference. If you still see errors, try installing the package individually with `pip install --no-build-isolation <package_name>`.
 
 ### 3. Model Dependencies
 Ensure `mmpose` is available as a submodule and the checkpoints exist in `mmpose/work_dirs/`.
@@ -149,6 +158,15 @@ Ensure port **8001** is open in the server's firewall (AWS Security Group, UFW, 
 
 ### 5. CORS Security
 Currently, CORS is set to `allow_origins=["*"]`. In production, you should update `apis/main.py` to only allow the specific domain of your web/mobile app.
+
+## Troubleshooting
+
+### "Address already in use" (Port 8001)
+If you see the error `[Errno 98] error while attempting to bind on address`, it means another process is already using port 8001. You can clear it using:
+```bash
+fuser -k 8001/tcp
+```
+*Note: You may need `sudo` depending on your server permissions.*
 
 ## Production Deployment Checklist (Step-by-Step)
 
