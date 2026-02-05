@@ -122,3 +122,4 @@ uvicorn
 python-multipart
 httpx
 pydantic-settings
+gunicorn

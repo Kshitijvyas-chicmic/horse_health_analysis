@@ -107,7 +107,81 @@ This endpoint implements a modular business logic agent that processes up to 4 l
 }
 ```
 
-## Scalability & Production Standards
-- **Modular Architecture**: V2 logic is split into stateless services for scoring, notes, quality, and aggregation.
-- **Strict Contract**: All keys are guaranteed in the response, using `null` for missing inputs.
-- **Resource Management**: Sequential inference ensures the server remains responsive even under batch load.
+## Production Deployment Guide
+
+To deploy this API on a fresh client server, follow these steps:
+
+### 1. Model File Sync
+The model checkpoints are large and may not be in Git. Ensure the following directory is physically present on the server:
+- `mmpose/work_dirs/rtmpose_hoof_unified_jan12/` (Contains `epoch_300.pth` and the `.py` config)
+
+### 2. Process Management (Gunicorn)
+For production, use **Gunicorn** with **Uvicorn workers** for better stability and process management:
+
+```bash
+conda activate env_mmpose_env
+pip install gunicorn
+# Run with 2 workers (or more depending on CPU cores)
+gunicorn apis.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001 --timeout 120
+```
+
+### 3. Using Systemd (Auto-restart)
+To ensure the API starts on boot and restarts after crashes, create a systemd service:
+
+```ini
+# /etc/systemd/system/horse-api.service
+[Unit]
+Description=Horse Health Analysis API
+After=network.target
+
+[Service]
+User=your_user
+WorkingDirectory=/path/to/horse_health_analysis
+ExecStart=/path/to/miniconda3/envs/env_mmpose_env/bin/gunicorn apis.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001 --timeout 120
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 4. Firewall & Port Access
+Ensure port **8001** is open in the server's firewall (AWS Security Group, UFW, or IPTables) to allow the Node.js/Mobile client to communicate with it.
+
+### 5. CORS Security
+Currently, CORS is set to `allow_origins=["*"]`. In production, you should update `apis/main.py` to only allow the specific domain of your web/mobile app.
+
+## Production Deployment Checklist (Step-by-Step)
+
+Follow this order to ensure a smooth transition to your client's production server:
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/Kshitijvyas-chicmic/horse_health_analysis.git
+   cd horse_health_analysis
+   ```
+
+2. **Setup Environment**:
+   ```bash
+   conda create -n env_mmpose_env python=3.10 -y
+   conda activate env_mmpose_env
+   pip install -r requirements.txt
+   # gunicorn is included in requirements.txt
+   ```
+
+3. **Sync Model Weights**:
+   > [!IMPORTANT]
+   > Model weights (`.pth` files) are NOT in Git. You must manually copy the `mmpose/work_dirs/` folder from this server to the production server at the exact same path.
+
+4. **Firewall & Port**:
+   - Open port **8001** for incoming TCP traffic.
+   - If using a reverse proxy (like Nginx), you might use port 80/443 pointing to 8001.
+
+5. **Security Update**:
+   - Open `apis/main.py`.
+   - Update `allow_origins = ["*"]` to `allow_origins = ["https://your-client-app.com"]`.
+
+6. **Go Live**:
+   - Start via Systemd (recommended) or use the Gunicorn command from the "Process Management" section above.
+
+---
+*Last updated: Feb 5, 2026*
