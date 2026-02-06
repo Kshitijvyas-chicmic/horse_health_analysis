@@ -90,6 +90,7 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
             results[f"{leg_key}Condition"] = None
             results[f"{leg_key}Recommendation"] = None
             results[f"{leg_key}Quality"] = None
+            results[f"{leg_key}QualityCheck"] = "Fail"
             continue
 
         # Calculate scores and clinical details
@@ -109,6 +110,7 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         results[f"{leg_key}Condition"] = condition
         results[f"{leg_key}Recommendation"] = recommendation
         results[f"{leg_key}Quality"] = quality
+        results[f"{leg_key}QualityCheck"] = "Pass"
         
         # Log Detailed Results
         print(f"✅ Analyzed {leg_key}: Score={score}, Condition={condition}")

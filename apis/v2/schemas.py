@@ -29,6 +29,12 @@ class AdvancedScanResponse(BaseModel):
     backLeftRecommendation: Optional[str] = None
     backRightRecommendation: Optional[str] = None
 
+    # Quality Check Fields (Pass/Fail)
+    frontLeftQualityCheck: Optional[str] = None
+    frontRightQualityCheck: Optional[str] = None
+    backLeftQualityCheck: Optional[str] = None
+    backRightQualityCheck: Optional[str] = None
+
     frontLeftQuality: Optional[int] = None
     frontRightQuality: Optional[int] = None
     backLeftQuality: Optional[int] = None

@@ -123,7 +123,42 @@ class HPAPredictor:
             "image_base64": None
         }
         
-        if all(s > 0.10 for s in scores):
+        # ANATOMY CHECK
+        # 0: pastern_top (Fetlock)
+        # 1: pastern_bottom
+        # 2: hoof_top (Coronary)
+        # 3: hoof_bottom (Toe)
+        
+        def is_anatomically_valid(kpts):
+            p0, p1, p2, p3 = kpts
+            
+            # 1. Gravity Check: Vertical Ordering
+            # Y increases downwards. So P0(top) < P2(mid) < P3(bottom)
+            # Allow small margin of error (e.g. 10px) for slight tilts
+            if p0[1] > p2[1] - 10: return False, "Fetlock below Coronary Band"
+            if p2[1] > p3[1] - 10: return False, "Coronary Band below Toe"
+            
+            # 2. Segment Length Ratio Check
+            def dist(a, b): return np.linalg.norm(a - b)
+            
+            pastern_len = dist(p0, p1)
+            hoof_wall_len = dist(p2, p3)
+            
+            # Safety checks for localized clusters (points too close)
+            if pastern_len < 10 or hoof_wall_len < 10:
+                return False, "Keypoints too Clustered"
+
+            ratio = pastern_len / hoof_wall_len
+            
+            # Pastern shouldn't be > 5x hoof, nor < 0.2x hoof
+            if ratio > 5.0: return False, "Pastern disproportionately long"
+            if ratio < 0.2: return False, "Hoof disproportionately long"
+            
+            return True, "OK"
+
+        valid_anatomy, reason = is_anatomically_valid(keypoints)
+        
+        if all(s > 0.40 for s in scores) and valid_anatomy:
             pts_math = {i: np.array(keypoints[i], copy=True) for i in range(4)}
             pts_math = apply_anatomical_offset(pts_math, img_w)
             
@@ -154,7 +189,13 @@ class HPAPredictor:
                 "model_confidence": round(float(np.mean(scores)), 2)
             })
         else:
-            cv2.putText(vis,"REJECTED",(20,50), cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+            fail_reason = reason if not valid_anatomy else "Low Confidence (<0.4)"
+            
+            # Draw specific technical reason on the image for debugging
+            cv2.putText(vis, f"REJECTED: {fail_reason}", (20,50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+            
+            # Return generic user-friendly message for the API response
+            metrics["error"] = "Analysis failed. Poor image quality or incorrect angle."
             
         _, buffer = cv2.imencode('.jpg', vis)
         metrics["image_base64"] = base64.b64encode(buffer).decode('utf-8')
