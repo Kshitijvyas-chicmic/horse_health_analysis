@@ -54,49 +54,56 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         else:
             leg_data[leg_key] = result
 
-    # 2. Sequential Inference (CPU intensive, so keep sequential to avoid thrashing)
-    leg_scores = []
-    for leg_key, img_bytes in leg_data.items():
+    # 2. Parallel Inference (Using ThreadPool to utilize multiple cores if GIL is released)
+    print(f"🧠 Running inference on {len(leg_data)} legs in parallel...")
+    from concurrent.futures import ThreadPoolExecutor
+    
+    def process_single_leg(leg_key, img_bytes):
         try:
             prediction = run_leg_inference(predictor, img_bytes)
-            
-            if not prediction.get("success"):
-                results[f"{leg_key}ScanScore"] = None
-                results[f"{leg_key}Notes"] = f"Inference failed: {prediction.get('error')}"
-                results[f"{leg_key}Quality"] = None
-                continue
-
-            # 3. Calculate Leg Score
-            p_angle = prediction["pastern_angle"]
-            h_angle = prediction["hoof_angle"]
-            conf = prediction["model_confidence"]
-            
-            score = calculate_leg_score(p_angle, h_angle)
-            quality = map_quality(conf)
-            notes = map_leg_notes(score)
-            
-            # 4. Store Results
-            results[f"{leg_key}ScanScore"] = score
-            results[f"{leg_key}Notes"] = notes
-            results[f"{leg_key}Quality"] = quality
-            
-            # Log Detailed Results for Validation
-            print(f"📊 Leg Result [{leg_key}]:")
-            print(f"   - pastern_angle: {p_angle:.2f}")
-            print(f"   - hoof_angle: {h_angle:.2f}")
-            print(f"   - hpa_dev: {prediction.get('hpa_dev'):.2f}")
-            print(f"   - model_confidence: {conf:.2f}")
-            print(f"   - calculated_score: {score}")
-            
-            leg_scores.append(score)
-
+            return leg_key, prediction
         except Exception as e:
-            print(f"❌ Error during inference for {leg_key}: {traceback.format_exc()}")
-            results[f"{leg_key}ScanScore"] = None
-            results[f"{leg_key}Notes"] = f"Inference error: {str(e)}"
-            results[f"{leg_key}Quality"] = None
+            return leg_key, {"success": False, "error": str(e)}
 
-    # 3. Aggregate
+    # We use a loop to create thread tasks
+    # Note: Torch usually releases the GIL during heavy math, so this should scale!
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        inference_tasks = [
+            loop.run_in_executor(pool, process_single_leg, k, b) 
+            for k, b in leg_data.items()
+        ]
+        inference_results = await asyncio.gather(*inference_tasks)
+
+    # 3. Process results
+    leg_scores = []
+    for leg_key, prediction in inference_results:
+        if not prediction.get("success"):
+            print(f"❌ Inference failed for {leg_key}: {prediction.get('error')}")
+            results[f"{leg_key}ScanScore"] = None
+            results[f"{leg_key}Notes"] = f"Inference failed: {prediction.get('error')}"
+            results[f"{leg_key}Quality"] = None
+            continue
+
+        # Calculate scores
+        p_angle = prediction["pastern_angle"]
+        h_angle = prediction["hoof_angle"]
+        conf = prediction["model_confidence"]
+        
+        score = calculate_leg_score(p_angle, h_angle)
+        quality = map_quality(conf)
+        notes = map_leg_notes(score)
+        
+        # Store Results
+        results[f"{leg_key}ScanScore"] = score
+        results[f"{leg_key}Notes"] = notes
+        results[f"{leg_key}Quality"] = quality
+        
+        # Log Detailed Results
+        print(f"✅ Analyzed {leg_key}: Score={score}, P={p_angle:.1f}, H={h_angle:.1f}")
+        leg_scores.append(score)
+
+    # 4. Aggregate
     aggregation = aggregate_scan(leg_scores)
     
     return AdvancedScanResponse(

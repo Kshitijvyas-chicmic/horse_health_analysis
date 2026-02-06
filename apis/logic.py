@@ -45,7 +45,14 @@ class HPAPredictor:
     def __init__(self, config_path, checkpoint_path, device='cpu'):
         register_all_modules()
         cfg = Config.fromfile(config_path)
-        cfg.model.test_cfg.flip_test = True
+        
+        # flip_test: Runs inference twice (normal + flipped) and averages results
+        # - Accuracy gain: ~0.5-2% improvement
+        # - Speed cost: 2x slower (doubles inference time)
+        # - Current setting: False (prioritizing speed for production)
+        # - To re-enable: Set to True (recommended if using Gunicorn with 4+ workers)
+        cfg.model.test_cfg.flip_test = False
+        
         self.model = init_model(cfg, checkpoint_path, device=device)
         self.MODEL_RATIO = 192 / 256
         
