@@ -19,6 +19,16 @@ class AdvancedScanResponse(BaseModel):
     backLeftNotes: Optional[str] = None
     backRightNotes: Optional[str] = None
 
+    frontLeftCondition: Optional[str] = None
+    frontRightCondition: Optional[str] = None
+    backLeftCondition: Optional[str] = None
+    backRightCondition: Optional[str] = None
+
+    frontLeftRecommendation: Optional[str] = None
+    frontRightRecommendation: Optional[str] = None
+    backLeftRecommendation: Optional[str] = None
+    backRightRecommendation: Optional[str] = None
+
     frontLeftQuality: Optional[int] = None
     frontRightQuality: Optional[int] = None
     backLeftQuality: Optional[int] = None

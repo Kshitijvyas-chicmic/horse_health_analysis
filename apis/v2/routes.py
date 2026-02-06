@@ -5,6 +5,7 @@ from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.notes import map_leg_notes
 from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
+from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
 import traceback
 
 router = APIRouter()
@@ -36,6 +37,8 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         else:
             results[f"{leg_key}ScanScore"] = None
             results[f"{leg_key}Notes"] = None
+            results[f"{leg_key}Condition"] = None
+            results[f"{leg_key}Recommendation"] = None
             results[f"{leg_key}Quality"] = None
 
     # Run downloads in parallel
@@ -50,6 +53,8 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
             print(f"❌ Download failed for {leg_key}: {result}")
             results[f"{leg_key}ScanScore"] = None
             results[f"{leg_key}Notes"] = f"Download failed: {str(result)}"
+            results[f"{leg_key}Condition"] = None
+            results[f"{leg_key}Recommendation"] = None
             results[f"{leg_key}Quality"] = None
         else:
             leg_data[leg_key] = result
@@ -82,25 +87,31 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
             print(f"❌ Inference failed for {leg_key}: {prediction.get('error')}")
             results[f"{leg_key}ScanScore"] = None
             results[f"{leg_key}Notes"] = f"Inference failed: {prediction.get('error')}"
+            results[f"{leg_key}Condition"] = None
+            results[f"{leg_key}Recommendation"] = None
             results[f"{leg_key}Quality"] = None
             continue
 
-        # Calculate scores
+        # Calculate scores and clinical details
         p_angle = prediction["pastern_angle"]
         h_angle = prediction["hoof_angle"]
         conf = prediction["model_confidence"]
         
         score = calculate_leg_score(p_angle, h_angle)
         quality = map_quality(conf)
-        notes = map_leg_notes(score)
+        notes = map_clinical_notes(score)  # Using new detailed notes
+        condition = map_condition(score)
+        recommendation = map_recommendation(score)
         
         # Store Results
         results[f"{leg_key}ScanScore"] = score
         results[f"{leg_key}Notes"] = notes
+        results[f"{leg_key}Condition"] = condition
+        results[f"{leg_key}Recommendation"] = recommendation
         results[f"{leg_key}Quality"] = quality
         
         # Log Detailed Results
-        print(f"✅ Analyzed {leg_key}: Score={score}, P={p_angle:.1f}, H={h_angle:.1f}")
+        print(f"✅ Analyzed {leg_key}: Score={score}, Condition={condition}")
         leg_scores.append(score)
 
     # 4. Aggregate
