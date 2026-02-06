@@ -1,0 +1,15 @@
+INFO:     Started server process [3291323]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🚀 Initializing HPAPredictor...
+Loads checkpoint by local backend from path: mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth
+✅ HPAPredictor initialized successfully
+📡 Request: POST http://localhost:8000/api/v2/check_quality
+INFO:     127.0.0.1:58728 - "POST /api/v2/check_quality HTTP/1.1" 200 OK
+📡 Request: POST http://localhost:8000/api/v2/check_quality
+INFO:     127.0.0.1:58740 - "POST /api/v2/check_quality HTTP/1.1" 200 OK
+📡 Request: POST http://localhost:8000/api/v2/check_quality
+INFO:     127.0.0.1:58752 - "POST /api/v2/check_quality HTTP/1.1" 200 OK
+📡 Request: POST http://localhost:8000/api/v2/check_quality
+INFO:     127.0.0.1:58756 - "POST /api/v2/check_quality HTTP/1.1" 200 OK

@@ -7,6 +7,15 @@ class AdvancedScanRequest(BaseModel):
     backLeftLateral: Optional[str] = None
     backRightLateral: Optional[str] = None
 
+class ImageQualityRequest(BaseModel):
+    imageUrl: str  # Single image URL (S3)
+
+class ImageQualityResponse(BaseModel):
+    success: bool
+    message: str
+    quality_score: int
+    error: Optional[str] = None
+
 class AdvancedScanResponse(BaseModel):
     # Per-leg Fields
     frontLeftScanScore: Optional[float] = None

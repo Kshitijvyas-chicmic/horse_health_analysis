@@ -1,14 +1,74 @@
 from fastapi import APIRouter, Request, HTTPException
-from apis.v2.schemas import AdvancedScanRequest, AdvancedScanResponse
+from apis.v2.schemas import AdvancedScanRequest, AdvancedScanResponse, ImageQualityRequest, ImageQualityResponse
 from apis.v2.services.inference import get_image_bytes, run_leg_inference
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.notes import map_leg_notes
-from apis.v2.services.quality import map_quality
+from apis.v2.services.quality import map_quality, validate_image_quality
 from apis.v2.services.aggregator import aggregate_scan
 from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
 import traceback
 
 router = APIRouter()
+
+@router.post("/check_quality", response_model=ImageQualityResponse)
+async def check_quality(request: ImageQualityRequest, req: Request):
+    """
+    Dedicated endpoint to check image quality before analysis.
+    Uses strict confidence threshold (>0.4) and anatomical sanity checks.
+    """
+    predictor = req.app.state.predictor
+    if not predictor:
+        raise HTTPException(status_code=503, detail="Model not initialized")
+        
+    try:
+        # Download image
+        img_bytes = await get_image_bytes(request.imageUrl)
+        
+        # Inference
+        prediction = run_leg_inference(predictor, img_bytes)
+        
+        if not prediction.get("success"):
+            # Even if logic.py rejected it (very low confidence < 0.1), fail quality check
+            return ImageQualityResponse(
+                success=False,
+                message="Inference failed. Image unrecognizable.",
+                quality_score=0,
+                error=prediction.get("error")
+            )
+            
+        # Get raw data exposed by logic.py
+        raw_keypoints = prediction.get("raw_keypoints")
+        raw_scores = prediction.get("raw_scores")
+        
+        # Perform Strict Validation
+        is_valid, reason = validate_image_quality(raw_keypoints, raw_scores)
+        
+        # Calculate quality score (1-10)
+        q_score = map_quality(prediction.get("model_confidence", 0))
+        
+        if is_valid:
+            return ImageQualityResponse(
+                success=True,
+                message="Image quality is good.",
+                quality_score=q_score,
+                error=None
+            )
+        else:
+             return ImageQualityResponse(
+                success=False,
+                message="Analysis failed. Poor image quality or incorrect angle.",
+                quality_score=q_score,
+                error=reason
+            )
+        
+    except Exception as e:
+        print(f"Error checking quality: {e}")
+        return ImageQualityResponse(
+            success=False,
+            message="Internal server error during quality check.",
+            quality_score=0,
+            error=str(e)
+        )
 
 @router.post("/analyze", response_model=AdvancedScanResponse)
 async def analyze_v2(request: AdvancedScanRequest, req: Request):
