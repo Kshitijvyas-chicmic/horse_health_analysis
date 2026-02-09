@@ -195,7 +195,7 @@ class HPAPredictor:
             cv2.putText(vis, f"REJECTED: {fail_reason}", (20,50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
             
             # Return generic user-friendly message for the API response
-            metrics["error"] = "Analysis failed. Poor image quality or incorrect angle."
+            metrics["error"] = "Poor image quality or incorrect angle.Please retake the image."
             
         _, buffer = cv2.imencode('.jpg', vis)
         metrics["image_base64"] = base64.b64encode(buffer).decode('utf-8')
