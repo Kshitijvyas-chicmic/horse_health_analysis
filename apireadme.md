@@ -198,15 +198,13 @@ fuser -k 8001/tcp
 
 Follow this order to ensure a smooth transition to your client's production server:
 
-1. **Clone the Repository (with Submodules)**:
-   > [!IMPORTANT]
-   > `mmpose` is a Git Submodule. You MUST use the `--recursive` flag or the folder will be empty.
+1. **Clone the Repository**:
+   > [!NOTE]
+   > The `mmpose` engine is now internalized as a regular directory. A standard clone will include everything you need.
    ```bash
-   git clone --recursive https://github.com/Kshitijvyas-chicmic/horse_health_analysis.git
+   git clone https://github.com/Kshitijvyas-chicmic/horse_health_analysis.git
    cd horse_health_analysis
    ```
-   *If you already cloned without submodules, run:*
-   `git submodule update --init --recursive`
 
 2. **Sync Model Weights (Manual Step)**:
    > [!WARNING]

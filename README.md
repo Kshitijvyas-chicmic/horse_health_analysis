@@ -122,13 +122,13 @@ Use this for final clinical reports. It features calibrated math and zero-oversh
 ```bash
 python demo/inference_on_new_image_refined.py /path/to/image.jpg
 ```
-- **Config**: `custom_configs/rtmpose_hoof_4kp_copy.py`
+- **Config**: `mmpose/custom_configs/rtmpose_hoof_4kp.py`
 - **Output**: `output_inference.jpg` (Segmented joints + Clinical HPA Dev)
 
 ### 2. Vanguard Scan (Baseline)
 Use this as a baseline audit tool.
 ```bash
-python demo/inference_on_new_image.py /path/to/image.jpg
+python mmpose/demo/inference_on_new_image.py /path/to/image.jpg
 ```
 
 ---
@@ -137,7 +137,7 @@ python demo/inference_on_new_image.py /path/to/image.jpg
 
 To retrain the model with Geometric Invariance (Random Rotation):
 
-1. **Configure**: Use `custom_configs/rtmpose_hoof_4kp_copy.py`.
+1. **Configure**: Use `mmpose/custom_configs/rtmpose_hoof_4kp.py`.
 2. **Parameters**:
    - `rotate_factor=10`: Decouples anatomy from image orientation (Geometric Invariance).
    - `max_epochs=300`: Allows the joint localization to "settle" for clinical precision.
@@ -163,12 +163,12 @@ python demo/inference_on_new_image.py /home/chetan/Desktop/demo.jpeg
 To check the angles of any image:(to compare what you draw on cvat and what device reading says.)
 test_pipeline.py
 
-To add mmpose as submodule:
-git submodule add https://github.com/open-mmlab/mmpose.git mmpose
+### 📦 MMPose Management
+The `mmpose` engine is internalized as a regular directory in this repository to ensure all custom patches (e.g., in `common_transforms.py`) and configurations are natively tracked.
 
-**Never do git add . on main dir. rather add mmpose changes seperataly and main chaanges seperate. This will keep our git clean.
+**Never do git add . on main dir.** Add changes separately to keep the git history clean.
 
-# we have change some code in mmpose/datasets/transforms/common_transforms.py ->  to make it work for our project. So whenever you update mmpose, make sure to update this file as well.
+# We have modified code in `mmpose/mmpose/datasets/transforms/common_transforms.py` for compatibility. These changes are natively tracked in the `image_quality_check` branch.
 
 Run `inference_on_new_image_refined.py` to get the clinical angles of any new image with high precision.
 
