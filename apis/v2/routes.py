@@ -146,7 +146,7 @@ async def analyze_v2(request: AdvancedScanRequest, req: Request):
         if not prediction.get("success"):
             print(f"❌ Inference failed for {leg_key}: {prediction.get('error')}")
             results[f"{leg_key}ScanScore"] = None
-            results[f"{leg_key}Notes"] = f"Inference failed: {prediction.get('error')}"
+            results[f"{leg_key}Notes"] = f"Scan failed: {prediction.get('error')}"
             results[f"{leg_key}Condition"] = None
             results[f"{leg_key}Recommendation"] = None
             results[f"{leg_key}Quality"] = None

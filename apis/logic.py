@@ -156,8 +156,11 @@ class HPAPredictor:
                 "raw_keypoints": [list(kp) for kp in keypoints]    # EXPOSED
             })
         else:
-            cv2.putText(vis,"REJECTED: Low Conf (<0.10)",(20,50), cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255),2)
-            metrics["error"] = "Low Confidence (<0.10)"
+            # Note: HPAPredictor is lenient. Strict quality check is handled by the /check_quality endpoint.
+            cv2.putText(vis, "REJECTED: Low Confidence (<0.10)", (20,50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+            
+            # Adopting user-friendly message from main
+            metrics["error"] = "Poor image quality or incorrect angle.Please retake the image."
             
         _, buffer = cv2.imencode('.jpg', vis)
         metrics["image_base64"] = base64.b64encode(buffer).decode('utf-8')
