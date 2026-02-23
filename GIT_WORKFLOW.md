@@ -5,7 +5,8 @@ This guide covers all Git operations for this project, including submodule manag
 ## Table of Contents
 - [Initial Setup](#initial-setup)
 - [Daily Workflow](#daily-workflow)
-- [Submodule Management](#submodule-management)
+- [MMPose Internalization (New)](#mmpose-internalization-new)
+- [Submodule Management (Legacy)](#submodule-management-legacy)
 - [Branching Strategy](#branching-strategy)
 - [Common Issues](#common-issues)
 
@@ -119,7 +120,27 @@ git push origin main
 
 ---
 
-## Submodule Management
+## MMPose Internalization (New)
+
+> [!IMPORTANT]
+> In the `image_quality_check` branch, the `mmpose` engine has been internalized. It is now a regular directory, not a submodule.
+
+### Advantages:
+- Simplified `git push`: No more 403 Permission Denied errors.
+- Native Tracking: Custom patches (like the one in `common_transforms.py`) are saved directly in this repository.
+- Easier Deployment: Standard `git pull` on the server gets everything at once.
+
+### Updated Workflow:
+```bash
+# Simply add and commit mmpose files like any other file
+git add mmpose/custom_configs/rtmpose_hoof_4kp.py
+git commit -m "Update custom config"
+git push origin image_quality_check
+```
+
+---
+
+## Submodule Management (Legacy)
 
 ### Understanding Submodules
 
