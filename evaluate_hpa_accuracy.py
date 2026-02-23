@@ -43,7 +43,7 @@ def calculate_hpa_metrics(keypoints):
 
 def main():
     register_all_modules()
-    config = 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'
+    config = 'mmpose/custom_configs/rtmpose_hoof_4kp.py'
     checkpoint = 'mmpose/work_dirs/rtmpose_hoof_590_manual_rotation_jan9/epoch_300.pth'
     
     print("🚀 Initializing model for evaluation...")

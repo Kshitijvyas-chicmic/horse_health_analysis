@@ -14,7 +14,7 @@ def main():
     register_all_modules()
     
     # Config and Checkpoint
-    config = 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'
+    config = 'mmpose/custom_configs/rtmpose_hoof_4kp.py'
     checkpoint = 'mmpose/work_dirs/rtmpose_hoof_refined_6jan_v2_rotation/epoch_300.pth'
     
     # Paths

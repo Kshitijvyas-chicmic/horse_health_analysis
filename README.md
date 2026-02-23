@@ -174,3 +174,24 @@ Run `inference_on_new_image_refined.py` to get the clinical angles of any new im
 
 TO split the new json in train and val:
  python3 /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/split_dataset.py --input /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_590.json --train_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/train_590.json --val_out /home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/val_590.json --ratio 0.85
+
+---
+
+## 🔄 Data Processing Pipeline Overview
+
+This is the standard workflow for preparing data and training the model:
+
+1.  **Collect Data**: Add new images to `data/images`.
+2.  **Split Dataset**: Run `split_dataset.py` to create `train.json` and `val.json`.
+3.  **Optimize BBoxes**: Run `fix_bbox_from_keypoints.py` on your new JSONs to expand detection margins.
+4.  **Update Config**: Point your model config (e.g., `rtmpose_hoof_4kp.py`) to the new `_fixed.json` files.
+5.  **Train**: Execute the training script/command.
+
+### 🛠️ Script Roles
+
+| Script | Responsibility | Key Output |
+| :--- | :--- | :--- |
+| `split_dataset.py` | **Splitter**: Partitions master CVAT export into training and validation sets. | `train.json`, `val.json` |
+| `fix_bbox_from_keypoints.py` | **Optimizer**: Expands bounding boxes for better model performance. | `train_fixed.json`, `val_fixed.json` |
+| `sync_annotations.py` | **Syncer**: Updates existing files with refined labels from new CVAT exports. | Updated annotations |
+| `train_hoof_pose.sh` | **Runner**: Automates the training environment and execution. | Trained Model (`.pth`) |
