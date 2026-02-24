@@ -25,4 +25,4 @@ COPY . .
 EXPOSE 8000
 
 # Run API
-CMD ["gunicorn", "-w", "4", "-k", uvicorn.workers.UvicornWorker", "apis.main:app", "--bind", "0.0.0.0:8000", "--timeout", "120"]
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "apis.main:app", "--bind", "0.0.0.0:8000", "--timeout", "120"]
