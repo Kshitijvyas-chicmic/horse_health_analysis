@@ -170,6 +170,29 @@ The `mmpose` engine is internalized as a regular directory in this repository to
 
 # We have modified code in `mmpose/mmpose/datasets/transforms/common_transforms.py` for compatibility. These changes are natively tracked in the `image_quality_check` branch.
 
+### 📦 Docker Orchestration (Recommended for Production)
+We now provide a full Docker suite with 3 specialized containers:
+1. **API Container**: Optimized for CPU inference.
+2. **Training Container**: GPU-enabled for model development.
+3. **Automation Stack**: Includes **n8n** (workflow) and **MLflow** (tracking).
+
+#### Quick Start
+```bash
+# Build and start all services in the background
+docker compose up -d
+
+# Check service logs
+docker compose logs -f api
+```
+
+| Service | Local URL | Description |
+| :--- | :--- | :--- |
+| **API** | `http://localhost:8000` | FastAPI Inference Engine |
+| **MLflow** | `http://localhost:5000` | Experiment & Model Tracking |
+| **n8n** | `http://localhost:5678` | Node-based Automation |
+
+---
+
 Run `inference_on_new_image_refined.py` to get the clinical angles of any new image with high precision.
 
 TO split the new json in train and val:

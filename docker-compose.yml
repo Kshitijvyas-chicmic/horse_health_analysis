@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # --- Service 1: FastAPI Inference API ---
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: horse_health_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./mmpose/work_dirs:/app/mmpose/work_dirs:ro # Mount weights as read-only
+    restart: unless-stopped
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+
+  # --- Service 2: ML Training Machine ---
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    container_name: horse_health_trainer
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./mmpose/work_dirs:/app/mmpose/work_dirs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+
+  # --- Service 3: MLflow Experiment Tracking ---
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.2
+    container_name: horse_health_mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow:/mlflow
+    command: mlflow server --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root /mlflow/artifacts --host 0.0.0.0
+
+  # --- Service 4: n8n Automation ---
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: horse_health_n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_FUNCTION_ALLOW_EXTERNAL=axios,lodash
+    restart: always
+
+networks:
+  default:
+    name: horse_health_network
