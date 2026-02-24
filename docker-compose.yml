@@ -1,30 +1,27 @@
-version: '3.8'
+version: "3.9"
 
 services:
-  # --- Service 1: FastAPI Inference API ---
+  # ---------------- API ----------------
   api:
     build:
       context: .
-      dockerfile: Dockerfile.api
+      dockerfile: docker/api/Dockerfile
     container_name: horse_health_api
     ports:
       - "8000:8000"
     volumes:
-      - ./mmpose/work_dirs:/app/mmpose/work_dirs:ro # Mount weights as read-only
+      - ./models:/app/models:ro
+      - ./mmpose/work_dirs:/app/mmpose/work_dirs:ro
+    depends_on:
+      - mlflow
     restart: unless-stopped
-    environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
 
-  # --- Service 2: ML Training Machine ---
+  # ---------------- Training ----------------
   trainer:
     build:
       context: .
-      dockerfile: Dockerfile.train
+      dockerfile: docker/training/Dockerfile
     container_name: horse_health_trainer
-    volumes:
-      - .:/app
-      - ./data:/app/data
-      - ./mmpose/work_dirs:/app/mmpose/work_dirs
     deploy:
       resources:
         reservations:
@@ -32,32 +29,42 @@ services:
             - driver: nvidia
               count: all
               capabilities: [ gpu ]
+    volumes:
+      - .:/app
+      - ./datasets:/app/datasets
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    command: tail -f /dev/null
 
-  # --- Service 3: MLflow Experiment Tracking ---
+  # ---------------- MLflow ----------------
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.10.2
+    image: ghcr.io/mlflow/mlflow
     container_name: horse_health_mlflow
     ports:
       - "5000:5000"
     volumes:
-      - ./mlflow:/mlflow
-    command: mlflow server --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root /mlflow/artifacts --host 0.0.0.0
+      - ./mlruns:/mlruns
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlruns/mlflow.db --default-artifact-root /mlruns
+    restart: unless-stopped
 
-  # --- Service 4: n8n Automation ---
+  # ---------------- n8n ----------------
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n
     container_name: horse_health_n8n
     ports:
       - "5678:5678"
     volumes:
       - ./n8n_data:/home/node/.n8n
+      - ./datasets:/datasets
+      - ./models:/models
     environment:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - NODE_FUNCTION_ALLOW_EXTERNAL=axios,lodash
     restart: always
 
 networks:

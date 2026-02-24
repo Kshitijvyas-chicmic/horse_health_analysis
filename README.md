@@ -170,26 +170,39 @@ The `mmpose` engine is internalized as a regular directory in this repository to
 
 # We have modified code in `mmpose/mmpose/datasets/transforms/common_transforms.py` for compatibility. These changes are natively tracked in the `image_quality_check` branch.
 
-### 📦 Docker Orchestration (Recommended for Production)
-We now provide a full Docker suite with 3 specialized containers:
-1. **API Container**: Optimized for CPU inference.
-2. **Training Container**: GPU-enabled for model development.
-3. **Automation Stack**: Includes **n8n** (workflow) and **MLflow** (tracking).
+### 📦 Docker Orchestration (Senior Architecture)
+We use a high-performance orchestration setup with persistent shared storage:
+1. **API Container**: CPU-optimized inference (`/models` shared).
+2. **Training Container**: GPU-enabled dev environment (`/models` + `/datasets` shared).
+3. **Automation Stack**: **n8n** (CONDUCTOR) and **MLflow** (EXPERIMENT TRACKING).
 
-#### Quick Start
+#### Directory Structure
+```
+project/
+├── docker/          # Dockerfiles (api, training)
+├── datasets/        # Shared data volume
+├── models/          # Shared model weight volume
+├── mlruns/          # Shared MLflow experiment volume
+└── docker-compose.yml
+```
+
+#### Commands
 ```bash
-# Build and start all services in the background
+# Start the factory (API, MLflow, n8n)
 docker compose up -d
 
-# Check service logs
+# Run training inside the trainer container
+docker compose run --rm trainer python tools/train.py mmpose/custom_configs/rtmpose_hoof_4kp.py
+
+# Check logs
 docker compose logs -f api
 ```
 
-| Service | Local URL | Description |
+| Service | Local URL | Link |
 | :--- | :--- | :--- |
-| **API** | `http://localhost:8000` | FastAPI Inference Engine |
-| **MLflow** | `http://localhost:5000` | Experiment & Model Tracking |
-| **n8n** | `http://localhost:5678` | Node-based Automation |
+| **API** | `http://localhost:8000` | Inference endpoint |
+| **MLflow** | `http://localhost:5000` | Track experiments |
+| **n8n** | `http://localhost:5678` | Automate everything |
 
 ---
 
