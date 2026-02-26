@@ -11,16 +11,15 @@ sys.path.append('mmpose')
 from apis.logic import HPAPredictor
 from apis.routes.v1.analyze import router as analyze_router
 from apis.v2.routes import router as analyze_v2_router
+from apis.routes.automation import router as automation_router
 
 app = FastAPI(
     title="Horse Health Analysis API",
     description="API for detecting horse hoof and pastern keypoints and calculating HPA metrics.",
-    version="1.0.2",
     servers=[
         {"url": "https://horse-health.projectlabs.in", "description": "Production server"},
         {"url": "http://localhost:8000", "description": "Local development server"}
-    ],
-    redirect_slashes=False  # CRITICAL: Prevent 307 redirects which break CORS preflights
+    ]
 )
 
 # 1. Proxy Support (Inner Middleware)
@@ -73,6 +72,7 @@ async def root():
 # Include versioned routers
 app.include_router(analyze_router, prefix="/api/v1", tags=["Analysis V1"])
 app.include_router(analyze_v2_router, prefix="/api/v2", tags=["Analysis V2"])
+app.include_router(automation_router, prefix="/automation", tags=["Automation"])
 
 # Keep the legacy endpoint for backward compatibility if needed, or remove it
 @app.post("/analyze", tags=["Legacy"])

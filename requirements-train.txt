@@ -123,3 +123,4 @@ python-multipart
 httpx
 pydantic-settings
 gunicorn
+mlflow-skinny

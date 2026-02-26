@@ -1,15 +1,36 @@
+# Environments
 .env
 .env_mmpose
 /env
-__pycache__/
 /env_mmpose
+venv/
+.venv/
+
+# Training and Data Artifacts
+data/
+datasets/
+work_dirs/
+mlruns/
+models/*.pth
+models/*.tflite
+models/*.onnx
+
+# Automation & Orchestration
+n8n_data/
+*.log
+*.ctl
+
+# Cache and temporary files
+__pycache__/
 cache/
 .cache/
-~./cache
 .ipynb_checkpoints
 .pytest_cache/
-~/.bash
-data/
+.DS_Store
 .ds_store
-debug_eval/
-#mmpose/
+
+# IDE and OS specific
+.vscode/
+.idea/
+*.swp
+*.bak

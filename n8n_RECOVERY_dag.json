@@ -1,0 +1,99 @@
+{
+    "name": "Horse Health: COMPATIBLE DAG",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "trigger_v1",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                100,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "bodyParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "split"
+                        }
+                    ]
+                }
+            },
+            "id": "split_v1",
+            "name": "1. Split Dataset",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                300,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "bodyParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "fix_bbox"
+                        }
+                    ]
+                }
+            },
+            "id": "fix_v1",
+            "name": "2. Fix Bboxes",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                500,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "content": "### 🛠️ Compatibility Version\nIf you see this note, you have successfully imported the RECOVERY file!"
+            },
+            "id": "note_v1",
+            "name": "Sticky Note",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                100,
+                0
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "1. Split Dataset",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "1. Split Dataset": {
+            "main": [
+                [
+                    {
+                        "node": "2. Fix Bboxes",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

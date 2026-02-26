@@ -57,7 +57,7 @@ def sync_annotations(source_path, target_path):
 if __name__ == "__main__":
     REFINED_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/cvat/person_keypoints_default_6_jan.json"
     VAL_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/val.json"
-    TRAIN_PATH = "/home/chetan/AI_First/horse_health_analysis/horse_health_analysis/data/annotations/train.json"
     
     sync_annotations(REFINED_PATH, VAL_PATH)
     sync_annotations(REFINED_PATH, TRAIN_PATH)
+

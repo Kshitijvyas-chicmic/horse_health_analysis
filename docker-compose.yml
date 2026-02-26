@@ -10,8 +10,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - .:/app
       - ./models:/app/models:ro
       - ./mmpose/work_dirs:/app/mmpose/work_dirs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - mlflow
     restart: unless-stopped
@@ -22,13 +24,6 @@ services:
       context: .
       dockerfile: docker/training/Dockerfile
     container_name: horse_health_trainer
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
     volumes:
       - .:/app
       - ./datasets:/app/datasets
@@ -38,7 +33,7 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     depends_on:
       - mlflow
-    command: tail -f /dev/null
+    command: [ "-c", "sleep infinity" ]
 
   # ---------------- MLflow ----------------
   mlflow:
@@ -51,16 +46,19 @@ services:
     command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlruns/mlflow.db --default-artifact-root /mlruns
     restart: unless-stopped
 
-  # ---------------- n8n ----------------
+  # ---------------- n8n (Orchestrator) ----------------
   n8n:
     image: docker.n8n.io/n8nio/n8n
     container_name: horse_health_n8n
+    user: root
     ports:
       - "5678:5678"
     volumes:
       - ./n8n_data:/home/node/.n8n
+      - .:/app
       - ./datasets:/datasets
       - ./models:/models
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - N8N_HOST=localhost
       - N8N_PORT=5678

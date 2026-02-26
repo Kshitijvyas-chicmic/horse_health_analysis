@@ -1,0 +1,211 @@
+{
+    "name": "Horse Health: FULL AUTOMATION (API-Powered)",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "trigger_v2",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                0,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "queryParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "split"
+                        }
+                    ]
+                }
+            },
+            "id": "split_v2",
+            "name": "1. Split Dataset",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                220,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "queryParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "fix_bbox"
+                        }
+                    ]
+                }
+            },
+            "id": "fix_v2",
+            "name": "2. Fix Bboxes",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                440,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "queryParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "validate"
+                        }
+                    ]
+                }
+            },
+            "id": "validate_v2",
+            "name": "3. Validate Integrity",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                660,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "queryParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "update_config"
+                        }
+                    ]
+                }
+            },
+            "id": "update_v2",
+            "name": "4. Update Config",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                880,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/automation/run-task",
+                "options": {},
+                "queryParametersUi": {
+                    "parameter": [
+                        {
+                            "name": "task",
+                            "value": "train"
+                        }
+                    ]
+                }
+            },
+            "id": "train_v2",
+            "name": "5. Run Training",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                1100,
+                240
+            ]
+        },
+        {
+            "parameters": {
+                "fromEmail": "automation@horse-health.ai",
+                "toEmail": "kshitij.vyas@gmail.com",
+                "subject": "✅ Training Started Successfully",
+                "text": "The pipeline has finished. Data is split, fixed, validated, and training is now running in the background. Check MLflow for progress.",
+                "options": {}
+            },
+            "id": "notify_v2",
+            "name": "6. Success Notification",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 1,
+            "position": [
+                1320,
+                240
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "1. Split Dataset",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "1. Split Dataset": {
+            "main": [
+                [
+                    {
+                        "node": "2. Fix Bboxes",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "2. Fix Bboxes": {
+            "main": [
+                [
+                    {
+                        "node": "3. Validate Integrity",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "3. Validate Integrity": {
+            "main": [
+                [
+                    {
+                        "node": "4. Update Config",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. Update Config": {
+            "main": [
+                [
+                    {
+                        "node": "5. Run Training",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. Run Training": {
+            "main": [
+                [
+                    {
+                        "node": "6. Success Notification",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

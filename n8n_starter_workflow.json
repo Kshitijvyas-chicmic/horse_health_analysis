@@ -1,0 +1,60 @@
+{
+    "name": "Horse Health: Model & API Monitor (Fixed)",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "trigger",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                200,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/",
+                "options": {}
+            },
+            "id": "api-check",
+            "name": "Check API Health",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "content": "### 🚀 Horse Health Automation\n\n**Note on \"Execute Command\"**: If the JSON import fails on the command node, simply:\n1. Search for \"Execute Command\" in the nodes panel.\n2. Drag it here.\n3. Type: `ls /models` in the command field."
+            },
+            "id": "note",
+            "name": "Instruction Note",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                200,
+                0
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Check API Health",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    }
+}
