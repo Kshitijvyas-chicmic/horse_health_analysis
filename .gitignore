@@ -33,4 +33,8 @@ cache/
 .vscode/
 .idea/
 *.swp
-*.bak
+# Build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
