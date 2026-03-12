@@ -94,8 +94,8 @@ def main():
             return p[7:] # strip 'mmpose/'
         return p
 
-    parser.add_argument('--config', default=fix_path('mmpose/custom_configs/rtmpose_hoof_4kp.py'))
-    parser.add_argument('--checkpoint', default=fix_path('mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth'))
+    parser.add_argument('--config', default=fix_path('mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'))
+    parser.add_argument('--checkpoint', default=fix_path('mmpose/work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth'))
 
     parser.add_argument('--out-file', default='output_inference.jpg')
     parser.add_argument('--device', default='cpu')
