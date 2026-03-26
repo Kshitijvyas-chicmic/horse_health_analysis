@@ -11,9 +11,9 @@ sys.path.append('mmpose')
 
 from apis.logic import HPAPredictor
 from apis.yolo_predictor import YOLOPredictor
-from apis.routes import v1
-from apis.v2 import routes as v2_routes
-from apis.v3 import routes as v3_routes
+from apis.routes.v1.analyze import router as analyze_router
+from apis.v2.routes import router as analyze_v2_router
+from apis.v3.routes import router as analyze_v3_router
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -136,8 +136,7 @@ async def analyze_image(file: UploadFile = File(...)):
         
         return JSONResponse(content=results)
     except Exception as e:
-        import traceback
-        print(f"❌ Error during analysis: {traceback.format_exc()}")
+        logger.error(f"❌ Error during analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
