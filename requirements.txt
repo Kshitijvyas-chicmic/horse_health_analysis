@@ -13,6 +13,7 @@ pydantic-settings
 
 # --- Computer Vision & ML (CPU-ONLY) ---
 # This ensures we don't download 5GB of CUDA binaries
+setuptools==69.5.1
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.0.0
 torchvision==0.15.1
@@ -21,6 +22,8 @@ ultralytics==8.2.21
 scikit-learn
 
 # --- MMpose & OpenMMLab Core ---
+# Use pre-built CPU wheels for MMCV/MMDet to avoid build-from-source errors
+--find-links https://download.openmmlab.com/mmcv/dist/cpu/torch2.0/index.html
 mmcv==2.0.1
 mmdet==3.3.0
 mmengine==0.10.7
