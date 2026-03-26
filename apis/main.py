@@ -1,18 +1,26 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 import sys
+import logging
 
 # Ensure mmpose is in path for logic imports
 sys.path.append('mmpose')
 
 from apis.logic import HPAPredictor
 from apis.yolo_predictor import YOLOPredictor
-from apis.routes.v1.analyze import router as analyze_router
-from apis.v2.routes import router as analyze_v2_router
-from apis.v3.routes import router as analyze_v3_router
+from apis.routes import v1
+from apis.v2 import routes as v2_routes
+from apis.v3 import routes as v3_routes
+
+# Setup Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Get Absolute Project Root
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 app = FastAPI(
     title="Horse Health Analysis API",
@@ -20,6 +28,7 @@ app = FastAPI(
     version="1.0.2",
     servers=[
         {"url": "https://horse-health.projectlabs.in", "description": "Production server"},
+        {"url": "https://horse-health-new.projectlabs.in", "description": "Production new server"},
         {"url": "http://192.180.3.178:8001", "description": "Test server for sharing"}
     ],
     redirect_slashes=False  # CRITICAL: Prevent 307 redirects which break CORS preflights
@@ -46,34 +55,48 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Configuration — MMPose
-CONFIG_PATH = 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/rtmpose_hoof_unified_jan12.py'
-CHECKPOINT_PATH = 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth'
+# Configuration — Absolute Paths
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/rtmpose_hoof_unified_jan12.py')
+CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth')
+YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
 DEVICE = 'cpu'
-
-# Configuration — YOLO Medium
-YOLO_WEIGHTS = 'runs/segment/hpa_v8m_full_v1/weights/best.pt'
 
 # Initialize predictors at startup (loaded once, reused across all requests)
 @app.on_event("startup")
 async def startup_event():
     # 1. MMPose
-    print("🚀 Initializing HPAPredictor (MMPose)...")
+    logger.info("🚀 Initializing HPAPredictor (MMPose)...")
     try:
         app.state.predictor = HPAPredictor(CONFIG_PATH, CHECKPOINT_PATH, device=DEVICE)
-        print("✅ HPAPredictor initialized successfully")
+        logger.info("✅ HPAPredictor initialized successfully")
     except Exception as e:
-        print(f"❌ Failed to initialize HPAPredictor: {e}")
+        logger.error(f"❌ Failed to initialize HPAPredictor: {e}")
         app.state.predictor = None
 
     # 2. YOLO Medium
-    print("🚀 Initializing YOLOPredictor (YOLO Medium)...")
+    logger.info("🚀 Initializing YOLOPredictor (YOLO Medium)...")
     try:
-        app.state.yolo_predictor = YOLOPredictor(YOLO_WEIGHTS)
-        print("✅ YOLOPredictor initialized successfully")
+        if not os.path.exists(YOLO_WEIGHTS):
+            logger.error(f"❌ YOLO weights not found at: {YOLO_WEIGHTS}")
+            app.state.yolo_predictor = None
+        else:
+            app.state.yolo_predictor = YOLOPredictor(YOLO_WEIGHTS)
+            logger.info("✅ YOLOPredictor initialized successfully")
     except Exception as e:
-        print(f"❌ Failed to initialize YOLOPredictor: {e}")
+        logger.error(f"❌ Failed to initialize YOLOPredictor: {e}")
         app.state.yolo_predictor = None
+
+@app.get("/api/status", tags=["Health"])
+async def status():
+    """Returns the initialization status of the models."""
+    return {
+        "mmpose": "loaded" if getattr(app.state, "predictor", None) else "failed",
+        "yolo": "loaded" if getattr(app.state, "yolo_predictor", None) else "failed",
+        "paths": {
+            "root": PROJECT_ROOT,
+            "yolo_exists": os.path.exists(YOLO_WEIGHTS)
+        }
+    }
 
 @app.get("/", tags=["Health"])
 @app.get("/ping", tags=["Health"])
