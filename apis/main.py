@@ -55,7 +55,7 @@ app.add_middleware(
     max_age=3600,
 )
 
-Configuration — Absolute Paths (Old working)
+#Configuration — Absolute Paths (Old working)
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/rtmpose_hoof_unified_jan12.py')
 CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth')
 YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
