@@ -17,6 +17,8 @@ pydantic-settings
 torch==2.0.0
 torchvision==0.15.1
 torchaudio==2.0.1
+ultralytics==8.2.21
+scikit-learn
 
 # --- MMpose & OpenMMLab Core ---
 mmcv==2.0.1
