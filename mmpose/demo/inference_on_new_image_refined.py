@@ -166,28 +166,6 @@ def main():
             best_score = agg
             best_res = res
             best_zone = z['name']
-    # for z in zones:
-    #     z_h = z['y2'] - z['y1']
-    #     z_w = z_h * MODEL_RATIO
-
-    #     x1 = max(0, (img_w - z_w) / 2)
-    #     x2 = min(img_w, x1 + z_w)
-
-    #     bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
-
-    #     res = inference_topdown(model, img, bboxes=bbox[None, :])[0]
-    #     scores = res.pred_instances.keypoint_scores[0]
-
-    #     agg = np.mean(scores) * 10
-    #     if any(s < 0.15 for s in scores):
-    #         agg -= 5
-
-    #     print(f"  - [{z['name']}]: Score={agg:.2f} (Avg_Conf={np.mean(scores):.2f})")
-
-    #     if agg > best_score or best_res is None:
-    #         best_score = agg
-    #         best_res = res
-    #         best_zone = z['name']
 
     keypoints = best_res.pred_instances.keypoints[0]
     scores = best_res.pred_instances.keypoint_scores[0]
