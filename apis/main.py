@@ -55,16 +55,11 @@ app.add_middleware(
     max_age=3600,
 )
 
-#Configuration — Absolute Paths (Old working)
-CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/rtmpose_hoof_unified_jan12.py')
-CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_unified_jan12/epoch_300.pth')
+# Configuration — Absolute Paths for Deployment
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_9_march/rtmpose_hoof_4kp_copy.py')
+CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth')
 YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
 DEVICE = 'cpu'
-
-# CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_12_march/rtmpose_hoof_4kp_copy.py')
-# CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_12_march/epoch_300.pth')
-# YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
-# DEVICE = 'cpu'
 
 # Initialize predictors at startup (loaded once, reused across all requests)
 @app.on_event("startup")

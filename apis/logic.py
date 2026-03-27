@@ -47,11 +47,10 @@ class HPAPredictor:
         cfg = Config.fromfile(config_path)
         
         # flip_test: Runs inference twice (normal + flipped) and averages results
-        # - Accuracy gain: ~0.5-2% improvement
-        # - Speed cost: 2x slower (doubles inference time)
-        # - Current setting: False (prioritizing speed for production)
-        # - To re-enable: Set to True (recommended if using Gunicorn with 4+ workers)
-        cfg.model.test_cfg.flip_test = False
+        # - Accuracy gain: Critical for unstable edge-case images (matches local demo script)
+        # - Speed cost: Adds ~50-100ms latency per image
+        # - Current setting: True (prioritizing accuracy for production)
+        cfg.model.test_cfg.flip_test = True
         
         self.model = init_model(cfg, checkpoint_path, device=device)
         self.MODEL_RATIO = 192 / 256
@@ -69,6 +68,22 @@ class HPAPredictor:
             
         img_h, img_w = img.shape[:2]
         
+        def is_anatomically_valid(kpts):
+            p0, p1, p2, p3 = kpts
+            if p0[1] > p2[1] - 10: return False, "Fetlock below Coronary Band"
+            if p2[1] > p3[1] - 10: return False, "Coronary Band below Toe"
+            
+            def dist(a, b): return np.linalg.norm(a - b)
+            pastern_len = dist(p0, p1)
+            hoof_wall_len = dist(p2, p3)
+            
+            if pastern_len < 10 or hoof_wall_len < 10: return False, "Keypoints too Clustered"
+            ratio = pastern_len / hoof_wall_len
+            if ratio > 5.0: return False, "Pastern disproportionately long"
+            if ratio < 0.2: return False, "Hoof disproportionately long"
+            
+            return True, "OK"
+
         zones = [
             {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h},
             {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8)},
@@ -79,6 +94,7 @@ class HPAPredictor:
         best_res = None
         best_score = -1
         best_zone = None
+        best_reason = "OK"
         
         for z in zones:
             z_h = z['y2'] - z['y1']
@@ -91,20 +107,17 @@ class HPAPredictor:
             kpts = res.pred_instances.keypoints[0]
             scores = res.pred_instances.keypoint_scores[0]
             
-            is_sane = True
-            p0_y = kpts[0][1]
-            p2_y = kpts[2][1]
-            if p0_y > p2_y - 10:
-                is_sane = False
+            is_sane, reason = is_anatomically_valid(kpts)
             
             agg = np.mean(scores) * 10
             if not is_sane:
-                agg -= 8
+                agg -= 8  # Heavy penalty for anatomically impossible poses
                 
             if agg > best_score or best_res is None:
                 best_score = agg
                 best_res = res
                 best_zone = z['name']
+                best_reason = reason
         
         keypoints = best_res.pred_instances.keypoints[0]
         scores = best_res.pred_instances.keypoint_scores[0]
@@ -123,40 +136,8 @@ class HPAPredictor:
             "image_base64": None
         }
         
-        # ANATOMY CHECK
-        # 0: pastern_top (Fetlock)
-        # 1: pastern_bottom
-        # 2: hoof_top (Coronary)
-        # 3: hoof_bottom (Toe)
-        
-        def is_anatomically_valid(kpts):
-            p0, p1, p2, p3 = kpts
-            
-            # 1. Gravity Check: Vertical Ordering
-            # Y increases downwards. So P0(top) < P2(mid) < P3(bottom)
-            # Allow small margin of error (e.g. 10px) for slight tilts
-            if p0[1] > p2[1] - 10: return False, "Fetlock below Coronary Band"
-            if p2[1] > p3[1] - 10: return False, "Coronary Band below Toe"
-            
-            # 2. Segment Length Ratio Check
-            def dist(a, b): return np.linalg.norm(a - b)
-            
-            pastern_len = dist(p0, p1)
-            hoof_wall_len = dist(p2, p3)
-            
-            # Safety checks for localized clusters (points too close)
-            if pastern_len < 10 or hoof_wall_len < 10:
-                return False, "Keypoints too Clustered"
-
-            ratio = pastern_len / hoof_wall_len
-            
-            # Pastern shouldn't be > 5x hoof, nor < 0.2x hoof
-            if ratio > 5.0: return False, "Pastern disproportionately long"
-            if ratio < 0.2: return False, "Hoof disproportionately long"
-            
-            return True, "OK"
-
-        valid_anatomy, reason = is_anatomically_valid(keypoints)
+        valid_anatomy = (best_reason == "OK")
+        reason = best_reason
         
         if all(s > 0.40 for s in scores) and valid_anatomy:
             pts_math = {i: np.array(keypoints[i], copy=True) for i in range(4)}

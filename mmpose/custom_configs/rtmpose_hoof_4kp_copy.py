@@ -17,7 +17,7 @@ _base_ = '../configs/body_2d_keypoint/rtmpose/coco/rtmpose-m_8xb256-420e_coco-25
 # =========================
 # Work Directory
 # =========================
-work_dir = './work_dirs/rtmpose_hoof_manual_10_march'
+work_dir = './work_dirs/rtmpose_hoof_manual_9_march'
 
 default_scope = 'mmpose'
 
