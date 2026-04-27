@@ -18,6 +18,31 @@ from mmengine.config import Config
 # =========================
 # ANGLE MATH (UNCHANGED)
 # =========================
+def calculate_angle(p1, p2):
+    """
+    Calculates the clinical angle of a segment (Pastern or Hoof) relative to the floor.
+    Mathematics:
+    1. Uses the vertical difference (dy) and horizontal difference (dx).
+    2. Calculates the tangent angle and converts it to degrees.
+    3. Normalizes it so that 0 is horizontal (the floor) and 90 is vertical.
+    """
+    p1 = np.array(p1)
+    p2 = np.array(p2)
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    angle_rad = math.atan2(abs(dy), abs(dx))
+    angle_deg = math.degrees(angle_rad)
+    return angle_deg
+
+def get_angle_diff(angle1, angle2):
+    """
+    Calculates the HPA (Hoof-Pastern Alignment) Deviation.
+    Ideally, the Pastern angle and Hoof angle should be perfectly aligned (Diff = 0).
+    A high deviation indicates a "Broken-Back" or "Broken-Forward" alignment.
+    """
+    return abs(angle1 - angle2)
+
+
 def angle_from_vertical(v):
     vertical = (0, -1)
     dot = v[0]*vertical[0] + v[1]*vertical[1]
@@ -73,13 +98,13 @@ def apply_anatomical_offset(pts, img_w):
     # Estimate local width (This is a heuristic, but very effective)
     # We use a small percentage of image width as a proxy for leg thickness 
     # unless you have a specific segmentation mask.
-    width_estimate = img_w * 0.05 
+    # width_estimate = img_w * 0.05 
 
-    # Shift Red Point (Top) significantly forward (20% of estimated width)
-    pts[0][0] += direction * (width_estimate * 0.25)
+    # # Shift Red Point (Top) significantly forward (20% of estimated width)
+    # pts[0][0] += direction * (width_estimate * 0.25)
     
-    # Shift Yellow Point (Bottom) slightly forward (10% of estimated width)
-    pts[1][0] += direction * (width_estimate * 0.10)
+    # # Shift Yellow Point (Bottom) slightly forward (10% of estimated width)
+    # pts[1][0] += direction * (width_estimate * 0.10)
     
     return pts
 # =========================
@@ -95,7 +120,12 @@ def main():
         return p
 
     parser.add_argument('--config', default=fix_path('mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'))
-    parser.add_argument('--checkpoint', default=fix_path('mmpose/work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth'))
+    parser.add_argument('--checkpoint', 
+                        default='work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth',
+                        help='Checkpoint file')
+    # parser.add_argument('--checkpoint', 
+    #                     default='work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth',
+    #                     help='Checkpoint file')
 
     parser.add_argument('--out-file', default='output_inference.jpg')
     parser.add_argument('--device', default='cpu')
@@ -118,15 +148,23 @@ def main():
 
     img = cv2.imread(args.img)
     img_h, img_w = img.shape[:2]
-    MODEL_RATIO = 192 / 256
+    MODEL_RATIO = 0.50     # Tightened Ratio (W/H) to ignore background distractions (was 0.75)
 
+    # zones = [
+    #     {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h},
+    #     {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8)},
+    #     {'name': 'Top-Anatomy',  'y1': 0,               'y2': int(img_h * 0.6)},
+    #     {'name': 'Global-Scan',  'y1': 0,               'y2': img_h},
+    # ] 
+    # Define the scanning zones to handle different horse positions:
+    # y1/y2: Vertical crop boundaries (0.0=top, 1.0=bottom)
+    # x_offsets: Horizontal shifts to ensure the leg is centered in the crop box
     zones = [
-        {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h},
-        {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8)},
-        {'name': 'Top-Anatomy',  'y1': 0,               'y2': int(img_h * 0.6)},
-        {'name': 'Global-Scan',  'y1': 0,               'y2': img_h},
-    ]
-
+        {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h,              'x_offsets': [0, -0.15, 0.15]},
+        {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8),  'x_offsets': [0, -0.15, 0.15]},
+        {'name': 'Top-Anatomy',  'y1': 0,               'y2': int(img_h * 0.6),  'x_offsets': [0]},
+        {'name': 'Global-Scan',  'y1': 0,               'y2': img_h,              'x_offsets': [0]},
+    ]   
     best_res = None
     best_score = -1
     best_zone = None
@@ -134,38 +172,42 @@ def main():
     valid_zones_results = []
     print(f"🔍 SCANNING: Evaluating {len(zones)} zones...")
     for z in zones:
-        z_h = z['y2'] - z['y1']
-        z_w = z_h * MODEL_RATIO
-        x1 = max(0, (img_w - z_w) / 2)
-        x2 = min(img_w, x1 + z_w)
-        bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
-
-        res = inference_topdown(model, img, bboxes=bbox[None, :])[0]
-        kpts = res.pred_instances.keypoints[0]
-        scores = res.pred_instances.keypoint_scores[0]
-
-        # --- THE SANITY GUARD (Fix for Demo 7) ---
-        # p0: Red (Pastern Top), p1: Orange (Pastern Bottom/Joint)
-        # In a real horse, p0 MUST be significantly higher (smaller Y) than the hoof points.
-        is_sane = True
-        p0_y = kpts[0][1]
-        p2_y = kpts[2][1] # Hoof Point
-        
-        # If the Pastern Top is lower than the Hoof Top, it's a "Heel Slip"
-        if p0_y > p2_y - 10: # 10px buffer
-            is_sane = False
+        for x_off in z.get('x_offsets', [0]):
+            z_h = z['y2'] - z['y1']
+            z_w = z_h * MODEL_RATIO
             
-        agg = np.mean(scores) * 10
-        if not is_sane:
-            agg -= 8  # Heavy penalty for anatomically impossible poses
-            print(f"  - [{z['name']}]: REJECTED (Anatomy Sanity Check Failed)")
-        else:
-            print(f"  - [{z['name']}]: Score={agg:.2f} (Avg_Conf={np.mean(scores):.2f})")
+            # Center + Offset
+            base_x1 = (img_w - z_w) / 2
+            x1 = max(0, base_x1 + (x_off * img_w))
+            x2 = min(img_w, x1 + z_w)
+            bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
 
-        if agg > best_score or best_res is None:
-            best_score = agg
-            best_res = res
-            best_zone = z['name']
+            res = inference_topdown(model, img, bboxes=bbox[None, :])[0]
+            kpts = res.pred_instances.keypoints[0]
+            scores = res.pred_instances.keypoint_scores[0]
+
+            # --- THE ANATOMY GUARD ---
+            # This check ensures the AI isn't hallucinating dots in the background.
+            # Rule: The Top-Pastern point (p0) MUST be physically higher in the image 
+            # than the Hoof-Wall points (p2).
+            is_sane = True
+            p0_y = kpts[0][1]
+            p2_y = kpts[2][1]
+            if p0_y > p2_y - 10: # If pastern is lower than hoof, it is a "Heel Slip" error
+                is_sane = False
+                
+            agg = np.mean(scores) * 10
+            if not is_sane:
+                agg -= 8  # Heavy penalty for anatomically impossible poses
+                print(f"  - [{z['name']} (off={x_off})]: REJECTED (Anatomy Fail)")
+            else:
+                print(f"  - [{z['name']} (off={x_off})]: Score={agg:.2f} (Avg_Conf={np.mean(scores):.2f})")
+
+            # Selection Logic: Keep the result from the zone with the highest anatomical confidence
+            if agg > best_score or best_res is None:
+                best_score = agg
+                best_res = res
+                best_zone = f"{z['name']} (off={x_off})"
 
     keypoints = best_res.pred_instances.keypoints[0]
     scores = best_res.pred_instances.keypoint_scores[0]
@@ -181,7 +223,7 @@ def main():
     if all(s > 0.10 for s in scores):
         # 1. Coordinate Prep (Deep copy to avoid reference leaks)
         pts_math = {i: np.array(keypoints[i], copy=True) for i in range(4)}
-        pts_math = apply_anatomical_offset(pts_math, img_w)
+        #pts_math = apply_anatomical_offset(pts_math, img_w)
         
         # 2. Math Normalization (Forward-Facing Invariant)
         # We transform the coordinates for math ONLY to handle left/right horses

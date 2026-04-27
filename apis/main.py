@@ -56,9 +56,9 @@ app.add_middleware(
 )
 
 # Configuration — Absolute Paths for Deployment
-CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_9_march/rtmpose_hoof_4kp_copy.py')
-CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth')
-YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_27_april/rtmpose_hoof_4kp_copy.py')
+CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_27_april/epoch_150.pth')
+# YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
 DEVICE = 'cpu'
 
 # Initialize predictors at startup (loaded once, reused across all requests)
@@ -73,28 +73,29 @@ async def startup_event():
         logger.error(f"❌ Failed to initialize HPAPredictor: {e}")
         app.state.predictor = None
 
-    # 2. YOLO Medium
-    logger.info("🚀 Initializing YOLOPredictor (YOLO Medium)...")
-    try:
-        if not os.path.exists(YOLO_WEIGHTS):
-            logger.error(f"❌ YOLO weights not found at: {YOLO_WEIGHTS}")
-            app.state.yolo_predictor = None
-        else:
-            app.state.yolo_predictor = YOLOPredictor(YOLO_WEIGHTS)
-            logger.info("✅ YOLOPredictor initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize YOLOPredictor: {e}")
-        app.state.yolo_predictor = None
+    # 2. YOLO Medium (Disabled for speed/stability)
+    # logger.info("🚀 Initializing YOLOPredictor (YOLO Medium)...")
+    # try:
+    #     if not os.path.exists(YOLO_WEIGHTS):
+    #         logger.error(f"❌ YOLO weights not found at: {YOLO_WEIGHTS}")
+    #         app.state.yolo_predictor = None
+    #     else:
+    #         app.state.yolo_predictor = YOLOPredictor(YOLO_WEIGHTS)
+    #         logger.info("✅ YOLOPredictor initialized successfully")
+    # except Exception as e:
+    #     logger.error(f"❌ Failed to initialize YOLOPredictor: {e}")
+    #     app.state.yolo_predictor = None
+    app.state.yolo_predictor = None
 
 @app.get("/api/status", tags=["Health"])
 async def status():
     """Returns the initialization status of the models."""
     return {
         "mmpose": "loaded" if getattr(app.state, "predictor", None) else "failed",
-        "yolo": "loaded" if getattr(app.state, "yolo_predictor", None) else "failed",
+        # "yolo": "loaded" if getattr(app.state, "yolo_predictor", None) else "failed",
         "paths": {
             "root": PROJECT_ROOT,
-            "yolo_exists": os.path.exists(YOLO_WEIGHTS)
+            # "yolo_exists": os.path.exists(YOLO_WEIGHTS)
         }
     }
 

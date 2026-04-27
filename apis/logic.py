@@ -53,7 +53,7 @@ class HPAPredictor:
         cfg.model.test_cfg.flip_test = True
         
         self.model = init_model(cfg, checkpoint_path, device=device)
-        self.MODEL_RATIO = 192 / 256
+        self.MODEL_RATIO = 0.50
         
     def predict(self, img_bytes):
         # Prevent empty or None buffers
@@ -85,10 +85,10 @@ class HPAPredictor:
             return True, "OK"
 
         zones = [
-            {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h},
-            {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8)},
-            {'name': 'Top-Anatomy',  'y1': 0,               'y2': int(img_h * 0.6)},
-            {'name': 'Global-Scan',  'y1': 0,               'y2': img_h},
+            {'name': 'Floor-Scan',   'y1': int(img_h * 0.4), 'y2': img_h,              'x_offsets': [0, -0.15, 0.15]},
+            {'name': 'Anatomy-Scan', 'y1': int(img_h * 0.2), 'y2': int(img_h * 0.8),  'x_offsets': [0, -0.15, 0.15]},
+            {'name': 'Top-Anatomy',  'y1': 0,               'y2': int(img_h * 0.6),  'x_offsets': [0]},
+            {'name': 'Global-Scan',  'y1': 0,               'y2': img_h,              'x_offsets': [0]},
         ]
         
         best_res = None
@@ -97,27 +97,31 @@ class HPAPredictor:
         best_reason = "OK"
         
         for z in zones:
-            z_h = z['y2'] - z['y1']
-            z_w = z_h * self.MODEL_RATIO
-            x1 = max(0, (img_w - z_w) / 2)
-            x2 = min(img_w, x1 + z_w)
-            bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
-            
-            res = inference_topdown(self.model, img, bboxes=bbox[None, :])[0]
-            kpts = res.pred_instances.keypoints[0]
-            scores = res.pred_instances.keypoint_scores[0]
-            
-            is_sane, reason = is_anatomically_valid(kpts)
-            
-            agg = np.mean(scores) * 10
-            if not is_sane:
-                agg -= 8  # Heavy penalty for anatomically impossible poses
+            for x_off in z.get('x_offsets', [0]):
+                z_h = z['y2'] - z['y1']
+                z_w = z_h * self.MODEL_RATIO
                 
-            if agg > best_score or best_res is None:
-                best_score = agg
-                best_res = res
-                best_zone = z['name']
-                best_reason = reason
+                # Center + Offset
+                base_x1 = (img_w - z_w) / 2
+                x1 = max(0, base_x1 + (x_off * img_w))
+                x2 = min(img_w, x1 + z_w)
+                bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
+                
+                res = inference_topdown(self.model, img, bboxes=bbox[None, :])[0]
+                kpts = res.pred_instances.keypoints[0]
+                scores = res.pred_instances.keypoint_scores[0]
+                
+                is_sane, reason = is_anatomically_valid(kpts)
+                
+                agg = np.mean(scores) * 10
+                if not is_sane:
+                    agg -= 8  # Heavy penalty for anatomically impossible poses
+                    
+                if agg > best_score or best_res is None:
+                    best_score = agg
+                    best_res = res
+                    best_zone = f"{z['name']} (off={x_off})"
+                    best_reason = reason
         
         keypoints = best_res.pred_instances.keypoints[0]
         scores = best_res.pred_instances.keypoint_scores[0]
@@ -141,7 +145,7 @@ class HPAPredictor:
         
         if all(s > 0.40 for s in scores) and valid_anatomy:
             pts_math = {i: np.array(keypoints[i], copy=True) for i in range(4)}
-            pts_math = apply_anatomical_offset(pts_math, img_w)
+            # pts_math = apply_anatomical_offset(pts_math, img_w)
             
             if pts_math[3][0] < pts_math[0][0]:
                 cx = (pts_math[0][0] + pts_math[3][0]) / 2

@@ -10,7 +10,7 @@ Key additions over v2:
 
 from fastapi import APIRouter, Request, HTTPException
 from apis.v3.schemas import AdvancedScanRequest, AdvancedScanResponse, ModelResult
-from apis.v2.services.inference import get_image_bytes, run_leg_inference, run_yolo_inference
+from apis.v2.services.inference import get_image_bytes, run_leg_inference  # , run_yolo_inference
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
@@ -81,12 +81,12 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
 @router.post("/analyze", response_model=AdvancedScanResponse)
 async def analyze_v3(request: AdvancedScanRequest, req: Request):
     predictor      = req.app.state.predictor
-    yolo_predictor = getattr(req.app.state, "yolo_predictor", None)
+    # yolo_predictor = getattr(req.app.state, "yolo_predictor", None)
 
     if not predictor:
         raise HTTPException(status_code=503, detail="MMPose model not initialized")
-    if not yolo_predictor:
-        raise HTTPException(status_code=503, detail="YOLO model not initialized")
+    # if not yolo_predictor:
+    #     raise HTTPException(status_code=503, detail="YOLO model not initialized")
 
     legs = {
         "frontLeft":  request.frontLeftLateral,
@@ -119,10 +119,10 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
 
     def process_single_leg(leg_key: str, img_bytes: bytes):
         mp = run_leg_inference(predictor, img_bytes)
-        yl = run_yolo_inference(yolo_predictor, img_bytes)
-        return leg_key, mp, yl
+        # yl = run_yolo_inference(yolo_predictor, img_bytes)
+        return leg_key, mp, {}  # yl disabled
 
-    print(f"🧠 [v3] Dual-model inference on {len(leg_data)} legs...")
+    print(f"🧠 [v3] MMPose-only inference on {len(leg_data)} legs...")
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=4) as pool:
         tasks = [
@@ -131,42 +131,36 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
         ]
         inference_results = await asyncio.gather(*tasks)
 
-    # ── 3. Build per-model field dicts ───────────────────────
+    # ── 3. Build MMPose field dict ───────────────────────────
     mmpose_fields: dict = {}
-    yolo_fields:   dict = {}
     mmpose_scores: list = []
 
-    for leg_key, mp_pred, yl_pred in inference_results:
+    for leg_key, mp_pred, _ in inference_results:
         mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
-        yl_payload, _        = _build_leg_payload(yl_pred, leg_key)
-
         mmpose_fields.update(mp_payload)
-        yolo_fields.update(yl_payload)
+        
         if mp_score is not None:
             mmpose_scores.append(mp_score)
 
-        # Side-by-side clinical log
-        print(f"📊 [v3] {leg_key}:")
-        print(f"   MMPose → P={mp_pred.get('pastern_angle')}°  H={mp_pred.get('hoof_angle')}°  Dev={mp_pred.get('hpa_dev')}°  Score={mp_score}")
-        print(f"   YOLO   → P={yl_pred.get('pastern_angle')}°  H={yl_pred.get('hoof_angle')}°  Dev={yl_pred.get('hpa_dev')}°")
+        # Clinical log
+        print(f"📊 [v3] {leg_key}: MMPose → P={mp_pred.get('pastern_angle')}°  H={mp_pred.get('hoof_angle')}°  Dev={mp_pred.get('hpa_dev')}°  Score={mp_score}")
 
     # ── 4. Fill missing legs (no image supplied) with None ───
     for leg_key, image_input in legs.items():
         if not image_input:
-            for fields in (mmpose_fields, yolo_fields):
-                for suffix in (
-                    "ScanScore", "Notes", "Condition", "Recommendation",
-                    "Quality", "QualityCheck",
-                    "HoofAngle", "PasternAngle", "AngleDeviation"
-                ):
-                    fields.setdefault(f"{leg_key}{suffix}", None)
+            for suffix in (
+                "ScanScore", "Notes", "Condition", "Recommendation",
+                "Quality", "QualityCheck",
+                "HoofAngle", "PasternAngle", "AngleDeviation"
+            ):
+                mmpose_fields.setdefault(f"{leg_key}{suffix}", None)
 
     # ── 5. Aggregate (MMPose as primary source) ──────────────
     aggregation = aggregate_scan(mmpose_scores)
 
     return AdvancedScanResponse(
         mmpose=ModelResult(**mmpose_fields),
-        yolo=ModelResult(**yolo_fields),
+        yolo=None,  # YOLO disabled per project requirements
         scanScore=aggregation["scanScore"],
         notes=aggregation["notes"],
         quality=1,

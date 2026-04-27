@@ -17,7 +17,7 @@ _base_ = '../configs/body_2d_keypoint/rtmpose/coco/rtmpose-m_8xb256-420e_coco-25
 # =========================
 # Work Directory
 # =========================
-work_dir = './work_dirs/rtmpose_hoof_manual_9_march'
+work_dir = './work_dirs/rtmpose_hoof_manual_27_april'
 
 default_scope = 'mmpose'
 
@@ -84,7 +84,9 @@ train_pipeline = [
         transforms=[
             dict(type='Blur', p=0.1),
             dict(type='MedianBlur', p=0.1),
-            dict(type='CLAHE', p=0.5),
+            dict(type='CLAHE', p=0.5), # Enhance local contrast
+            dict(type='RandomBrightnessContrast', brightness_limit=0.4, contrast_limit=0.4, p=0.5),
+            dict(type='HueSaturationValue', hue_shift_limit=10, sat_shift_limit=15, val_shift_limit=10, p=0.3),
             dict(
                 type='CoarseDropout',
                 max_holes=1,
@@ -127,7 +129,7 @@ train_dataloader = dict(
     dataset=dict(
         type='CocoDataset',
         data_root='../data',
-        ann_file='annotations/train_v7_fixed.json',
+        ann_file='annotations/train_fixed.json',
         data_prefix=dict(img='images/hq_consolidation_550/'),
         metainfo=dataset_info,
         pipeline=train_pipeline
@@ -140,7 +142,7 @@ val_dataloader = dict(
     dataset=dict(
         type='CocoDataset',
         data_root='../data',
-        ann_file='annotations/val_v7_fixed.json',
+        ann_file='annotations/val_fixed.json',
         data_prefix=dict(img='images/hq_consolidation_550/'),
         metainfo=dataset_info,
         pipeline=val_pipeline
@@ -151,7 +153,7 @@ val_dataloader = dict(
 
 val_evaluator = dict(
     type='CocoMetric',
-    ann_file='../data/annotations/val_v7_fixed.json',
+    ann_file='../data/annotations/val_fixed.json',
     score_mode='keypoint'
 )
 
@@ -161,7 +163,7 @@ val_evaluator = dict(
 
 train_cfg = dict(
     #type='EpochBasedTrainLoop',
-    max_epochs=300,
+    max_epochs=150,
     val_interval=10
 )
 
@@ -180,9 +182,9 @@ param_scheduler = [
     dict(
         type='CosineAnnealingLR',
         eta_min=base_lr * 0.05,
-        begin=150, # Start decay halfway
-        end=300,  # End at 300
-        T_max=150,
+        begin=75,  # Start decay halfway
+        end=150,   # End at 150
+        T_max=75,
         by_epoch=True,
         convert_to_iter_based=True),
 ]

@@ -62,12 +62,33 @@ def fix_coco_bboxes(coco_path, out_path=None):
 
         W = x_max - x_min
         H = y_max - y_min
+        
+        #for center based pastern angle
+        # x_min -= SIDE_MARGIN * W
+        # x_max += SIDE_MARGIN * W
+        # y_min -= TOP_MARGIN * H
+        # y_max += BOTTOM_MARGIN * H
 
-        x_min -= SIDE_MARGIN * W
-        x_max += SIDE_MARGIN * W
+        # Expand bbox — use H for all margins (critical for thin objects like legs)
+        x_min -= SIDE_MARGIN * H
+        x_max += SIDE_MARGIN * H
         y_min -= TOP_MARGIN * H
         y_max += BOTTOM_MARGIN * H
 
+        # --- ASPECT RATIO ENFORCEMENT (Match Inference Scanner) ---
+        # Target Ratio (W/H) = 0.50 — keeps crops tight on the leg
+        target_ratio = 0.50
+        w_temp = x_max - x_min
+        h_temp = y_max - y_min
+        current_ratio = w_temp / h_temp
+        if current_ratio < target_ratio:
+            dw = (h_temp * target_ratio) - w_temp
+            x_min -= dw / 2
+            x_max += dw / 2
+        else:
+            dh = (w_temp / target_ratio) - h_temp
+            y_min -= dh / 2
+            y_max += dh / 2
         # Clamp to image
         x_min = max(0, x_min)
         y_min = max(0, y_min)
@@ -77,7 +98,11 @@ def fix_coco_bboxes(coco_path, out_path=None):
         w = x_max - x_min
         h = y_max - y_min
         
-        if h < 0.25 * img_h:
+        #for center based pastern points
+        #if h < 0.25 * img_h:
+
+        #for front based pastern points 
+        if h < 0.10 * img_h:    
             skipped += 1
             continue
 

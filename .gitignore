@@ -80,3 +80,7 @@ exploration.ipynb
 *.sh
 /*.pt
 yolo_segmentation/
+colab_training.ipynb
+mmpose/work_dirs/
+*.pth
+*.jpg
