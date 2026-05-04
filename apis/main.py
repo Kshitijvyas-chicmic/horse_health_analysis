@@ -5,12 +5,14 @@ import uvicorn
 import os
 import sys
 import logging
+from contextlib import asynccontextmanager
 
 # Ensure mmpose is in path for logic imports
 sys.path.append('mmpose')
 
 from apis.logic import HPAPredictor
 from apis.yolo_predictor import YOLOPredictor
+from apis.image_utils import get_rembg_session
 from apis.routes.v1.analyze import router as analyze_router
 from apis.v2.routes import router as analyze_v2_router
 from apis.v3.routes import router as analyze_v3_router
@@ -22,6 +24,38 @@ logger = logging.getLogger(__name__)
 # Get Absolute Project Root
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Configuration — Absolute Paths for Deployment
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py')
+CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_30_april/epoch_130.pth')
+# YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
+DEVICE = 'cpu'
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup Logic ---
+    # 1. MMPose
+    logger.info("🚀 Initializing HPAPredictor (MMPose)...")
+    try:
+        app.state.predictor = HPAPredictor(CONFIG_PATH, CHECKPOINT_PATH, device=DEVICE)
+        logger.info("✅ HPAPredictor initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize HPAPredictor: {e}")
+        app.state.predictor = None
+
+    # 1.5. Rembg Session
+    logger.info("🚀 Initializing Rembg Session...")
+    get_rembg_session()
+
+    # 2. YOLO Medium (Disabled for speed/stability)
+    app.state.yolo_predictor = None
+    
+    yield
+    
+    # --- Shutdown Logic ---
+    logger.info("🛑 Shutting down API...")
+    if hasattr(app.state, 'predictor'):
+        del app.state.predictor
+
 app = FastAPI(
     title="Horse Health Analysis API",
     description="API for detecting horse hoof and pastern keypoints and calculating HPA metrics.",
@@ -31,7 +65,8 @@ app = FastAPI(
         {"url": "https://horse-health-new.projectlabs.in", "description": "Production new server"},
         {"url": "http://192.180.3.178:8001", "description": "Test server for sharing"}
     ],
-    redirect_slashes=False  # CRITICAL: Prevent 307 redirects which break CORS preflights
+    redirect_slashes=False,  # CRITICAL: Prevent 307 redirects which break CORS preflights
+    lifespan=lifespan
 )
 
 # 1. Proxy Support (Inner Middleware)
@@ -56,36 +91,9 @@ app.add_middleware(
 )
 
 # Configuration — Absolute Paths for Deployment
-CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py')
-CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_30_april/epoch_130.pth')
-# YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
-DEVICE = 'cpu'
+# (Moved above lifespan)
 
-# Initialize predictors at startup (loaded once, reused across all requests)
-@app.on_event("startup")
-async def startup_event():
-    # 1. MMPose
-    logger.info("🚀 Initializing HPAPredictor (MMPose)...")
-    try:
-        app.state.predictor = HPAPredictor(CONFIG_PATH, CHECKPOINT_PATH, device=DEVICE)
-        logger.info("✅ HPAPredictor initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize HPAPredictor: {e}")
-        app.state.predictor = None
-
-    # 2. YOLO Medium (Disabled for speed/stability)
-    # logger.info("🚀 Initializing YOLOPredictor (YOLO Medium)...")
-    # try:
-    #     if not os.path.exists(YOLO_WEIGHTS):
-    #         logger.error(f"❌ YOLO weights not found at: {YOLO_WEIGHTS}")
-    #         app.state.yolo_predictor = None
-    #     else:
-    #         app.state.yolo_predictor = YOLOPredictor(YOLO_WEIGHTS)
-    #         logger.info("✅ YOLOPredictor initialized successfully")
-    # except Exception as e:
-    #     logger.error(f"❌ Failed to initialize YOLOPredictor: {e}")
-    #     app.state.yolo_predictor = None
-    app.state.yolo_predictor = None
+# Initialize predictors at startup (handled by lifespan)
 
 @app.get("/api/status", tags=["Health"])
 async def status():
