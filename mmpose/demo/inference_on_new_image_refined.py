@@ -9,7 +9,16 @@ import sys
 if os.path.basename(os.getcwd()) != 'mmpose':
     if os.path.exists('mmpose'):
         sys.path.append('mmpose')
+    # Add project root to path for apis import
+    if os.path.dirname(os.getcwd()) not in sys.path:
+        sys.path.append(os.getcwd())
+else:
+    # If in mmpose dir, the root is one level up
+    root_dir = os.path.dirname(os.getcwd())
+    if root_dir not in sys.path:
+        sys.path.append(root_dir)
 
+from horse_health_analysis.apis.image_utils import remove_background
 from mmpose.apis import init_model, inference_topdown
 from mmpose.utils import register_all_modules
 from mmengine.config import Config
@@ -110,30 +119,90 @@ def apply_anatomical_offset(pts, img_w):
 # =========================
 # MAIN
 # =========================
+
+def align_hoof_points(p2, p3):
+    """
+    Forces hoof points to lie on the same anatomical slope.
+    Fixes inner/outer wall inconsistency.
+    """
+
+    p2 = np.array(p2, dtype=np.float32)
+    p3 = np.array(p3, dtype=np.float32)
+
+    # Step 1: ensure consistent vertical direction (toe above heel)
+    if p2[1] > p3[1]:
+        p2, p3 = p3, p2
+
+    # Step 2: compute direction vector
+    v = p2 - p3
+    norm = np.linalg.norm(v)
+
+    if norm < 1e-3:
+        return p2, p3
+
+    v = v / norm
+
+    # Step 3: project p2 onto line from p3 (removes sideways drift)
+    proj_len = np.dot(p2 - p3, v)
+    p2_proj = p3 + proj_len * v
+
+    return p2_proj, p3
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('img', help='Image file')
-    # Smart path resolution: if run from inside 'mmpose' dir, strip the 'mmpose/' prefix
+    # Smart path resolution for nested directories
     def fix_path(p):
-        if os.path.basename(os.getcwd()) == 'mmpose' and p.startswith('mmpose/'):
-            return p[7:] # strip 'mmpose/'
+        # 1. Try absolute path first
+        abs_p = os.path.abspath(p)
+        if os.path.exists(abs_p):
+            return abs_p
+            
+        # 2. Try relative to current working directory
+        if os.path.exists(p):
+            return os.path.abspath(p)
+        
+        # 3. Try relative to the script's directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # The script is in horse_health_analysis/mmpose/demo/
+        # Configs are in horse_health_analysis/mmpose/custom_configs/
+        # So we go up two levels to get to horse_health_analysis/mmpose/
+        mmpose_root = os.path.dirname(os.path.dirname(script_dir))
+        
+        # If path starts with mmpose/, it might be relative to the PROJECT root or MMPOSE root
+        path_parts = p.split(os.sep)
+        if 'mmpose' in path_parts:
+            # Find index of mmpose and take everything after it
+            idx = path_parts.index('mmpose')
+            sub_path = os.path.join(*path_parts[idx+1:])
+            attempt = os.path.join(mmpose_root, sub_path)
+            if os.path.exists(attempt):
+                return attempt
+
+        # 4. Try joining with the mmpose root directly if it's a known subfolder
+        attempt2 = os.path.join(mmpose_root, p)
+        if os.path.exists(attempt2):
+            return attempt2
+
         return p
 
-    parser.add_argument('--config', default=fix_path('mmpose/custom_configs/rtmpose_hoof_4kp_copy.py'))
-    parser.add_argument('--checkpoint', 
-                        default='work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth',
-                        help='Checkpoint file')
-    # parser.add_argument('--checkpoint', 
-    #                     default='work_dirs/rtmpose_hoof_manual_9_march/epoch_300.pth',
-    #                     help='Checkpoint file')
+    parser.add_argument('--config', default='mmpose/custom_configs/rtmpose_hoof_4kp_copy.py')
+    parser.add_argument('--checkpoint', default='mmpose/work_dirs/rtmpose_hoof_manual_30_april/epoch_130.pth')
+
 
     parser.add_argument('--out-file', default='output_inference.jpg')
     parser.add_argument('--device', default='cpu')
+    parser.add_argument('--remove-bg', action='store_true', help='Remove background before inference')
     args = parser.parse_args()
 
     # Apply fix to user-provided paths if they were passed manually but still use the root prefix
     args.config = fix_path(args.config)
     args.checkpoint = fix_path(args.checkpoint)
+
+    # NEW: Debug print to see final paths
+    print(f"DEBUG: Final config path: {os.path.abspath(args.config)}")
+    print(f"DEBUG: Final checkpoint path: {os.path.abspath(args.checkpoint)}")
 
     register_all_modules()
 
@@ -147,6 +216,13 @@ def main():
         return
 
     img = cv2.imread(args.img)
+    
+    if args.remove_bg:
+        print("Removing background...")
+        img = remove_background(img)
+        # Optionally save the intermediate bg-removed image for debugging
+        # cv2.imwrite('bg_removed_debug.jpg', img)
+
     img_h, img_w = img.shape[:2]
     MODEL_RATIO = 0.50     # Tightened Ratio (W/H) to ignore background distractions (was 0.75)
 
@@ -236,7 +312,11 @@ def main():
         # Pastern: Bottom -> Top
         v_p = (pts_math[0][0] - pts_math[1][0], pts_math[0][1] - pts_math[1][1])
         # Hoof: Toe -> Top
-        v_h = (pts_math[2][0] - pts_math[3][0], pts_math[2][1] - pts_math[3][1])
+        p2_aligned, p3_aligned = align_hoof_points(pts_math[2], pts_math[3])
+
+        # Hoof vector (fixed)
+        v_h = (p2_aligned[0] - p3_aligned[0], p2_aligned[1] - p3_aligned[1])
+        #v_h = (pts_math[2][0] - pts_math[3][0], pts_math[2][1] - pts_math[3][1])
 
         p_angle = clinical_angle(angle_from_vertical(v_p))
         h_angle = clinical_angle(angle_from_vertical(v_h))

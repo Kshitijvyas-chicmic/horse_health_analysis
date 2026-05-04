@@ -255,3 +255,7 @@ Interactive Docs: `http://<server-ip>:8001/docs`
 3. **Always re-run `fix_bbox_from_keypoints.py` before retraining** after adding new images. The aspect ratio enforcement ensures train/test consistency.
 
 4. **Best checkpoint selection:** Monitor AP@0.75 in the training logs (`scalars.json`). The best checkpoint is typically NOT the last one — check epoch 110–130 range for peak precision.
+
+
+Model choice:
+Latest: 29_April with 883 iamges and 140 epoch:

@@ -37,3 +37,5 @@ addict>=2.4.0
 pyyaml
 psutil
 tqdm
+rembg
+onnxruntime

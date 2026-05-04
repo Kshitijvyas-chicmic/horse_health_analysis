@@ -17,7 +17,7 @@ _base_ = '../configs/body_2d_keypoint/rtmpose/coco/rtmpose-m_8xb256-420e_coco-25
 # =========================
 # Work Directory
 # =========================
-work_dir = './work_dirs/rtmpose_hoof_manual_27_april'
+work_dir = './work_dirs/rtmpose_hoof_manual_30_april'
 
 default_scope = 'mmpose'
 
@@ -45,7 +45,7 @@ dataset_info = dict(
     paper_info=dict(
         author='',
         title='Horse Hoof Side View Keypoints',
-        year=2025,
+        year=2026,
         homepage=''
     ),
     keypoint_info=keypoint_info,
@@ -130,7 +130,7 @@ train_dataloader = dict(
         type='CocoDataset',
         data_root='../data',
         ann_file='annotations/train_fixed.json',
-        data_prefix=dict(img='images/hq_consolidation_550/'),
+        data_prefix=dict(img='images/hq_consolidation_797/'),
         metainfo=dataset_info,
         pipeline=train_pipeline
     )
@@ -143,7 +143,7 @@ val_dataloader = dict(
         type='CocoDataset',
         data_root='../data',
         ann_file='annotations/val_fixed.json',
-        data_prefix=dict(img='images/hq_consolidation_550/'),
+        data_prefix=dict(img='images/hq_consolidation_797/'),
         metainfo=dataset_info,
         pipeline=val_pipeline
     )
@@ -163,7 +163,7 @@ val_evaluator = dict(
 
 train_cfg = dict(
     #type='EpochBasedTrainLoop',
-    max_epochs=150,
+    max_epochs=130,
     val_interval=10
 )
 
@@ -182,9 +182,9 @@ param_scheduler = [
     dict(
         type='CosineAnnealingLR',
         eta_min=base_lr * 0.05,
-        begin=75,  # Start decay halfway
-        end=150,   # End at 150
-        T_max=75,
+        begin=65,  # Start decay halfway
+        end=130,   # End at 150
+        T_max=65,
         by_epoch=True,
         convert_to_iter_based=True),
 ]

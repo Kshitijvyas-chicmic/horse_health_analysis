@@ -8,6 +8,7 @@ sys.path.append('mmpose')
 from mmpose.apis import init_model, inference_topdown
 from mmpose.utils import register_all_modules
 from mmengine.config import Config
+from .image_utils import remove_background
 
 # --- ANGLE MATH ---
 def angle_from_vertical(v):
@@ -55,7 +56,7 @@ class HPAPredictor:
         self.model = init_model(cfg, checkpoint_path, device=device)
         self.MODEL_RATIO = 0.50
         
-    def predict(self, img_bytes):
+    def predict(self, img_bytes, remove_bg=True):
         # Prevent empty or None buffers
         if not img_bytes:
             raise ValueError("Empty image buffer provided")
@@ -66,6 +67,9 @@ class HPAPredictor:
         if img is None:
             raise ValueError("Could not decode image")
             
+        if remove_bg:
+            img = remove_background(img)
+
         img_h, img_w = img.shape[:2]
         
         def is_anatomically_valid(kpts):

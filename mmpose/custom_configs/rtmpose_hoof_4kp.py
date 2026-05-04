@@ -518,7 +518,7 @@ val_dataloader = dict(
     dataset=dict(
         ann_file='/app/datasets/val_fixed.json',
         data_mode='topdown',
-        data_prefix=dict(img='images/hq_consolidation_550/'),
+        data_prefix=dict(img='images/hq_consolidation_797/'),
         data_root='/app/data',
         metainfo=dict(
             dataset_name='horse_hoof_side',
