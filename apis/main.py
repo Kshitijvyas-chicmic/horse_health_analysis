@@ -57,7 +57,7 @@ app.add_middleware(
 
 # Configuration — Absolute Paths for Deployment
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py')
-CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_27_april/epoch_150.pth')
+CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_30_april/epoch_130.pth')
 # YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
 DEVICE = 'cpu'
 
