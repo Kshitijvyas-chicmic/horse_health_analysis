@@ -4,6 +4,12 @@ import math
 import os
 import base64
 import sys
+import threading
+
+# Global lock to prevent multiple workers from performing heavy inference simultaneously.
+# This solves the "Out of Memory" (OOM) and "CPU Choking" issues on resource-constrained servers.
+INFERENCE_LOCK = threading.Lock()
+
 sys.path.append('mmpose')
 from mmpose.apis import init_model, inference_topdown
 from mmpose.utils import register_all_modules
@@ -100,32 +106,35 @@ class HPAPredictor:
         best_zone = None
         best_reason = "OK"
         
-        for z in zones:
-            for x_off in z.get('x_offsets', [0]):
-                z_h = z['y2'] - z['y1']
-                z_w = z_h * self.MODEL_RATIO
-                
-                # Center + Offset
-                base_x1 = (img_w - z_w) / 2
-                x1 = max(0, base_x1 + (x_off * img_w))
-                x2 = min(img_w, x1 + z_w)
-                bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
-                
-                res = inference_topdown(self.model, img, bboxes=bbox[None, :])[0]
-                kpts = res.pred_instances.keypoints[0]
-                scores = res.pred_instances.keypoint_scores[0]
-                
-                is_sane, reason = is_anatomically_valid(kpts)
-                
-                agg = np.mean(scores) * 10
-                if not is_sane:
-                    agg -= 8  # Heavy penalty for anatomically impossible poses
+        # Use Global Lock to ensure only ONE inference (Background Removal + MMPose) 
+        # happens across all workers at any given time.
+        with INFERENCE_LOCK:
+            for z in zones:
+                for x_off in z.get('x_offsets', [0]):
+                    z_h = z['y2'] - z['y1']
+                    z_w = z_h * self.MODEL_RATIO
                     
-                if agg > best_score or best_res is None:
-                    best_score = agg
-                    best_res = res
-                    best_zone = f"{z['name']} (off={x_off})"
-                    best_reason = reason
+                    # Center + Offset
+                    base_x1 = (img_w - z_w) / 2
+                    x1 = max(0, base_x1 + (x_off * img_w))
+                    x2 = min(img_w, x1 + z_w)
+                    bbox = np.array([x1, z['y1'], x2, z['y2']], dtype=np.float32)
+                    
+                    res = inference_topdown(self.model, img, bboxes=bbox[None, :])[0]
+                    kpts = res.pred_instances.keypoints[0]
+                    scores = res.pred_instances.keypoint_scores[0]
+                    
+                    is_sane, reason = is_anatomically_valid(kpts)
+                    
+                    agg = np.mean(scores) * 10
+                    if not is_sane:
+                        agg -= 8  # Heavy penalty for anatomically impossible poses
+                        
+                    if agg > best_score or best_res is None:
+                        best_score = agg
+                        best_res = res
+                        best_zone = f"{z['name']} (off={x_off})"
+                        best_reason = reason
         
         keypoints = best_res.pred_instances.keypoints[0]
         scores = best_res.pred_instances.keypoint_scores[0]

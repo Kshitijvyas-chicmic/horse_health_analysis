@@ -54,7 +54,12 @@ def remove_background(image: np.ndarray) -> np.ndarray:
         output_rgba = np.array(output_rgba)
         
         alpha = output_rgba[:, :, 3]
+        
+        # Create a BLACK background image (0 instead of 255)
+        # Reverted to black to prevent server choking issues during testing
         black_bg = np.zeros_like(output_rgba[:, :, :3])
+        
+        # Mask the original RGB image using the alpha channel
         mask = alpha > 0
         black_bg[mask] = output_rgba[:, :, :3][mask]
         
