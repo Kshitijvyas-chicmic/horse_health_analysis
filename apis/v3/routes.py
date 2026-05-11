@@ -93,6 +93,10 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
         "frontRight": request.frontRightLateral,
         "backLeft":   request.backLeftLateral,
         "backRight":  request.backRightLateral,
+        "frontLeftFrontal":  request.frontLeftFrontal,
+        "frontRightFrontal": request.frontRightFrontal,
+        "backLeftFrontal":   request.backLeftFrontal,
+        "backRightFrontal":  request.backRightFrontal,
     }
 
     # ── 1. Download all images concurrently ──────────────────

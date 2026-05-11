@@ -7,6 +7,11 @@ class AdvancedScanRequest(BaseModel):
     frontRightLateral: Optional[str] = None
     backLeftLateral: Optional[str] = None
     backRightLateral: Optional[str] = None
+    # --- Frontal Views ---
+    frontLeftFrontal: Optional[str] = None
+    frontRightFrontal: Optional[str] = None
+    backLeftFrontal: Optional[str] = None
+    backRightFrontal: Optional[str] = None
 
 
 class ModelResult(BaseModel):
@@ -22,6 +27,11 @@ class ModelResult(BaseModel):
     frontRightScanScore: Optional[float] = None
     backLeftScanScore: Optional[float] = None
     backRightScanScore: Optional[float] = None
+    # --- Frontal Scan Scores ---
+    frontLeftFrontalScanScore: Optional[float] = None
+    frontRightFrontalScanScore: Optional[float] = None
+    backLeftFrontalScanScore: Optional[float] = None
+    backRightFrontalScanScore: Optional[float] = None
 
     # ── Per-leg Granular Clinical Angles ─────────────────────
     frontLeftHoofAngle: Optional[float] = None
@@ -40,35 +50,77 @@ class ModelResult(BaseModel):
     backRightPasternAngle: Optional[float] = None
     backRightAngleDeviation: Optional[float] = None
 
+    # --- Frontal Granular Clinical Angles ---
+    frontLeftFrontalHoofAngle: Optional[float] = None
+    frontLeftFrontalPasternAngle: Optional[float] = None
+    frontLeftFrontalAngleDeviation: Optional[float] = None
+
+    frontRightFrontalHoofAngle: Optional[float] = None
+    frontRightFrontalPasternAngle: Optional[float] = None
+    frontRightFrontalAngleDeviation: Optional[float] = None
+
+    backLeftFrontalHoofAngle: Optional[float] = None
+    backLeftFrontalPasternAngle: Optional[float] = None
+    backLeftFrontalAngleDeviation: Optional[float] = None
+
+    backRightFrontalHoofAngle: Optional[float] = None
+    backRightFrontalPasternAngle: Optional[float] = None
+    backRightFrontalAngleDeviation: Optional[float] = None
+
     # ── Per-leg Clinical Notes ───────────────────────────────
     frontLeftNotes: Optional[str] = None
     frontRightNotes: Optional[str] = None
     backLeftNotes: Optional[str] = None
     backRightNotes: Optional[str] = None
+    # --- Frontal Notes ---
+    frontLeftFrontalNotes: Optional[str] = None
+    frontRightFrontalNotes: Optional[str] = None
+    backLeftFrontalNotes: Optional[str] = None
+    backRightFrontalNotes: Optional[str] = None
 
     # ── Per-leg Condition ────────────────────────────────────
     frontLeftCondition: Optional[str] = None
     frontRightCondition: Optional[str] = None
     backLeftCondition: Optional[str] = None
     backRightCondition: Optional[str] = None
+    # --- Frontal Condition ---
+    frontLeftFrontalCondition: Optional[str] = None
+    frontRightFrontalCondition: Optional[str] = None
+    backLeftFrontalCondition: Optional[str] = None
+    backRightFrontalCondition: Optional[str] = None
 
     # ── Per-leg Recommendation ───────────────────────────────
     frontLeftRecommendation: Optional[str] = None
     frontRightRecommendation: Optional[str] = None
     backLeftRecommendation: Optional[str] = None
     backRightRecommendation: Optional[str] = None
+    # --- Frontal Recommendation ---
+    frontLeftFrontalRecommendation: Optional[str] = None
+    frontRightFrontalRecommendation: Optional[str] = None
+    backLeftFrontalRecommendation: Optional[str] = None
+    backRightFrontalRecommendation: Optional[str] = None
 
     # ── Per-leg Quality Check (Pass / Fail) ──────────────────
     frontLeftQualityCheck: Optional[str] = None
     frontRightQualityCheck: Optional[str] = None
     backLeftQualityCheck: Optional[str] = None
     backRightQualityCheck: Optional[str] = None
+    # --- Frontal Quality Check ---
+    frontLeftFrontalQualityCheck: Optional[str] = None
+    frontRightFrontalQualityCheck: Optional[str] = None
+    backLeftFrontalQualityCheck: Optional[str] = None
+    backRightFrontalQualityCheck: Optional[str] = None
 
     # ── Per-leg Quality Score (int) ──────────────────────────
     frontLeftQuality: Optional[int] = None
     frontRightQuality: Optional[int] = None
     backLeftQuality: Optional[int] = None
     backRightQuality: Optional[int] = None
+    # --- Frontal Quality Score ---
+    frontLeftFrontalQuality: Optional[int] = None
+    frontRightFrontalQuality: Optional[int] = None
+    backLeftFrontalQuality: Optional[int] = None
+    backRightFrontalQuality: Optional[int] = None
 
 
 class AdvancedScanResponse(BaseModel):
