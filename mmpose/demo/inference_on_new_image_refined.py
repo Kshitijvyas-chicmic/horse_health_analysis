@@ -219,7 +219,11 @@ def main():
     
     if args.remove_bg:
         print("Removing background...")
+        #old remove background logic.
         img = remove_background(img)
+
+        #New logic with silueta
+
         # Optionally save the intermediate bg-removed image for debugging
         # cv2.imwrite('bg_removed_debug.jpg', img)
 

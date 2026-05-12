@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 
 class AdvancedScanRequest(BaseModel):
@@ -123,6 +123,13 @@ class ModelResult(BaseModel):
     backRightFrontalQuality: Optional[int] = None
 
 
+class ScanScoreAggregateEntry(BaseModel):
+    """One inference slot that contributed a numeric score to overall scanScore."""
+
+    inferenceKey: str
+    score: float
+
+
 class AdvancedScanResponse(BaseModel):
     """
     Dual-model V3 response.
@@ -130,6 +137,9 @@ class AdvancedScanResponse(BaseModel):
     Frontend switches model by reading response['mmpose'] or response['yolo'].
 
     Overall scanScore is derived from MMPose as the primary clinical source.
+
+    scanScoreAggregateBreakdown / perInferenceScanScores explain how scanScore
+    was computed (lateral vs frontal slots are separate inference keys in v3).
     """
     mmpose: Optional[ModelResult] = None
     yolo: Optional[ModelResult] = None
@@ -138,3 +148,7 @@ class AdvancedScanResponse(BaseModel):
     scanScore: Optional[float] = None
     quality: int = 1
     notes: str
+
+    # Transparency: lateral keys (e.g. frontLeft) vs frontal (e.g. frontLeftFrontal)
+    perInferenceScanScores: dict[str, Optional[float]] = Field(default_factory=dict)
+    scanScoreAggregateBreakdown: List[ScanScoreAggregateEntry] = Field(default_factory=list)

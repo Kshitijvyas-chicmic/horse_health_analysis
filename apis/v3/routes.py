@@ -9,7 +9,12 @@ Key additions over v2:
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from apis.v3.schemas import AdvancedScanRequest, AdvancedScanResponse, ModelResult
+from apis.v3.schemas import (
+    AdvancedScanRequest,
+    AdvancedScanResponse,
+    ModelResult,
+    ScanScoreAggregateEntry,
+)
 from apis.v2.services.inference import get_image_bytes, run_leg_inference  # , run_yolo_inference
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.quality import map_quality
@@ -139,6 +144,7 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
     # ── 3. Build MMPose field dict ───────────────────────────
     mmpose_fields: dict = {}
     mmpose_scores: list = []
+    aggregate_breakdown: list[ScanScoreAggregateEntry] = []
 
     for leg_key, mp_pred, _ in inference_results:
         mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
@@ -146,6 +152,9 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
         
         if mp_score is not None:
             mmpose_scores.append(mp_score)
+            aggregate_breakdown.append(
+                ScanScoreAggregateEntry(inferenceKey=leg_key, score=mp_score)
+            )
 
         # Clinical log
         print(f"📊 [v3] {leg_key}: MMPose → P={mp_pred.get('pastern_angle')}°  H={mp_pred.get('hoof_angle')}°  Dev={mp_pred.get('hpa_dev')}°  Score={mp_score}")
@@ -163,6 +172,14 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
     # ── 5. Aggregate (MMPose as primary source) ──────────────
     aggregation = aggregate_scan(mmpose_scores)
 
+    per_inference_scan_scores = {
+        lk: mmpose_fields.get(f"{lk}ScanScore") for lk in legs
+    }
+    print(
+        f"📈 [v3] scanScore={aggregation['scanScore']} from {len(aggregate_breakdown)} slot(s): "
+        f"{[(e.inferenceKey, e.score) for e in aggregate_breakdown]}"
+    )
+
     # --- MEMORY MANAGEMENT ---
     # Clear the large dictionary of downloaded image bytes
     del leg_data
@@ -175,4 +192,6 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
         scanScore=aggregation["scanScore"],
         notes=aggregation["notes"],
         quality=1,
+        perInferenceScanScores=per_inference_scan_scores,
+        scanScoreAggregateBreakdown=aggregate_breakdown,
     )
