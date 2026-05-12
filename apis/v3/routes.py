@@ -21,6 +21,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
 
+# Top-level `scanScore` / `notes` (aggregate_scan): use lateral slots only.
+# Frontal views still run and return per-slot scores, but must not affect the overall.
+_LATERAL_KEYS_FOR_TOP_LEVEL_SCORE = frozenset(
+    {"frontLeft", "frontRight", "backLeft", "backRight"}
+)
+
 
 # ─────────────────────────────────────────────────────────────
 # Helper: Convert a raw predict() result into flat per-leg fields
@@ -143,8 +149,9 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
     for leg_key, mp_pred, _ in inference_results:
         mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
         mmpose_fields.update(mp_payload)
-        
-        if mp_score is not None:
+
+        # Do not include frontal keys in overall scanScore / notes aggregation.
+        if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
             mmpose_scores.append(mp_score)
 
         # Clinical log
