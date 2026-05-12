@@ -16,6 +16,7 @@ from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
 from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
 import asyncio
+import gc
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
@@ -161,6 +162,12 @@ async def analyze_v3(request: AdvancedScanRequest, req: Request):
 
     # ── 5. Aggregate (MMPose as primary source) ──────────────
     aggregation = aggregate_scan(mmpose_scores)
+
+    # --- MEMORY MANAGEMENT ---
+    # Clear the large dictionary of downloaded image bytes
+    del leg_data
+    del downloaded
+    gc.collect()
 
     return AdvancedScanResponse(
         mmpose=ModelResult(**mmpose_fields),

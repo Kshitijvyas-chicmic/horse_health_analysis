@@ -5,6 +5,17 @@ import os
 import base64
 import sys
 import threading
+import gc
+import psutil
+import logging
+
+# Setup Logger
+logger = logging.getLogger(__name__)
+
+def get_current_memory_usage():
+    """Returns the current memory usage of the process in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
 
 # Global lock to prevent multiple workers from performing heavy inference simultaneously.
 # This solves the "Out of Memory" (OOM) and "CPU Choking" issues on resource-constrained servers.
@@ -77,6 +88,9 @@ class HPAPredictor:
             img = remove_background(img)
 
         img_h, img_w = img.shape[:2]
+        
+        mem_before = get_current_memory_usage()
+        logger.info(f"📊 MEMORY [Before Inference]: {mem_before:.2f} MB")
         
         def is_anatomically_valid(kpts):
             p0, p1, p2, p3 = kpts
@@ -197,5 +211,16 @@ class HPAPredictor:
             
         _, buffer = cv2.imencode('.jpg', vis)
         metrics["image_base64"] = base64.b64encode(buffer).decode('utf-8')
+        
+        # --- MEMORY MANAGEMENT ---
+        # Explicitly delete large numpy arrays and call garbage collector
+        del img
+        del vis
+        del nparr
+        del buffer
+        gc.collect()
+        
+        mem_after = get_current_memory_usage()
+        logger.info(f"📊 MEMORY [After Inference & GC]: {mem_after:.2f} MB (Reclaimed: {mem_before - mem_after:.2f} MB)")
         
         return metrics
