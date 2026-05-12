@@ -84,9 +84,6 @@ class HPAPredictor:
         if img is None:
             raise ValueError("Could not decode image")
             
-        if remove_bg:
-            img = remove_background(img)
-
         img_h, img_w = img.shape[:2]
         
         mem_before = get_current_memory_usage()
@@ -123,6 +120,9 @@ class HPAPredictor:
         # Use Global Lock to ensure only ONE inference (Background Removal + MMPose) 
         # happens across all workers at any given time.
         with INFERENCE_LOCK:
+            if remove_bg:
+                img = remove_background(img)
+
             for z in zones:
                 for x_off in z.get('x_offsets', [0]):
                     z_h = z['y2'] - z['y1']
