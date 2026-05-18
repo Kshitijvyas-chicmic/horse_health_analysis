@@ -117,8 +117,7 @@ class HPAPredictor:
         best_zone = None
         best_reason = "OK"
         
-        # Use Global Lock to ensure only ONE inference (Background Removal + MMPose) 
-        # happens across all workers at any given time.
+        # Use Global Lock: one inference at a time (rembg + MMPose when remove_bg=True).
         with INFERENCE_LOCK:
             if remove_bg:
                 img = remove_background(img)

@@ -19,11 +19,12 @@ async def get_image_bytes(image_input: str) -> bytes:
             image_input = image_input.split(",")[1]
         return base64.b64decode(image_input)
 
-def run_leg_inference(predictor: HPAPredictor, image_bytes: bytes) -> dict:
+def run_leg_inference(predictor: HPAPredictor, image_bytes: bytes, remove_bg: bool = True) -> dict:
     """
     Runs MMPose inference on a single leg and returns raw results.
+    v3 uses remove_bg=True (server cutout); v4 calls with remove_bg=False.
     """
-    return predictor.predict(image_bytes)
+    return predictor.predict(image_bytes, remove_bg=remove_bg)
 
 
 def run_yolo_inference(yolo_predictor: YOLOPredictor, image_bytes: bytes) -> dict:
