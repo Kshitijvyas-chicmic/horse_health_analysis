@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import sys
 from PIL import Image as PILImage
-from rembg import remove
+# from rembg import remove  # Disabled — V4 receives pre-cutout images from mobile
 from transformers import pipeline as hf_pipeline
 from mmpose.apis import MMPoseInferencer
 
@@ -71,21 +71,30 @@ def estimate_depth(image_bgr: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def extract_foreground_rgba(image_bgr: np.ndarray) -> tuple:
-    """Run rembg and return (rgba HxWx4, mask uint8).
+    """Generate foreground mask from a pre-cutout image (no rembg needed).
 
-    FIX #11: saves RGBA with transparency instead of black background.
+    V4 receives images that are already background-removed by the mobile app.
+    We detect foreground pixels by checking for non-black/non-white regions
+    and return an RGBA image + binary mask.
     """
     h, w = image_bgr.shape[:2]
-    logging.info("Running rembg on image at full resolution (%dx%d)", w, h)
-    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    rgba = remove(rgb)
-    if rgba is None or rgba.ndim < 3 or rgba.shape[2] < 4:
-        raise RuntimeError("rembg returned unexpected result")
-    alpha = rgba[:, :, 3]
-    _, mask = cv2.threshold(alpha, 10, 255, cv2.THRESH_BINARY)
+    logging.info("Generating foreground mask from pre-cutout image (%dx%d)", w, h)
+
+    # Convert to grayscale to detect non-background pixels
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    # Threshold: pixels that are not near-black (background) are foreground
+    _, mask = cv2.threshold(gray, 15, 255, cv2.THRESH_BINARY)
+
+    # Clean up mask with morphological operations
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
     mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)), iterations=1)
+
+    # Build RGBA from the original image + generated alpha
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    rgba = np.dstack([rgb, mask])
+
     return rgba, mask.astype(np.uint8)
 
 
