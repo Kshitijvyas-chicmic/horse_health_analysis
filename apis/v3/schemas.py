@@ -122,6 +122,12 @@ class ModelResult(BaseModel):
     backLeftFrontalQuality: Optional[int] = None
     backRightFrontalQuality: Optional[int] = None
 
+    # --- Frontal Image URLs ---
+    frontLeftFrontalImageUrl: Optional[str] = None
+    frontRightFrontalImageUrl: Optional[str] = None
+    backLeftFrontalImageUrl: Optional[str] = None
+    backRightFrontalImageUrl: Optional[str] = None
+
 
 class AdvancedScanResponse(BaseModel):
     """

@@ -7,7 +7,7 @@ API v4 — Same clinical flow as v3, for mobile pre-cutout images.
 
 from fastapi import APIRouter, Request, HTTPException
 from apis.v4.schemas import AdvancedScanRequest, AdvancedScanResponse, ModelResult
-from apis.v4.services.inference import get_image_bytes, run_leg_inference
+from apis.v4.services.inference import get_image_bytes, run_leg_inference, process_frontal_leg_symmetry
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
@@ -99,8 +99,12 @@ async def analyze_v4(request: AdvancedScanRequest, req: Request):
             leg_data[leg_key] = downloaded[i]
 
     def process_single_leg(leg_key: str, img_bytes: bytes):
-        mp = run_leg_inference(predictor, img_bytes)
-        return leg_key, mp, {}
+        if "Frontal" in leg_key:
+            url = process_frontal_leg_symmetry(img_bytes)
+            return leg_key, None, url
+        else:
+            mp = run_leg_inference(predictor, img_bytes)
+            return leg_key, mp, None
 
     print(f"🧠 [v4] MMPose inference (no rembg) on {len(leg_data)} slot(s)...")
     loop = asyncio.get_event_loop()
@@ -114,20 +118,34 @@ async def analyze_v4(request: AdvancedScanRequest, req: Request):
     mmpose_fields: dict = {}
     mmpose_scores: list = []
 
-    for leg_key, mp_pred, _ in inference_results:
-        mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
-        mmpose_fields.update(mp_payload)
-
-        if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
-            mmpose_scores.append(mp_score)
-
-        print(
-            f"📊 [v4] {leg_key}: P={mp_pred.get('pastern_angle')}° "
-            f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
-        )
+    for leg_key, mp_pred, frontal_url in inference_results:
+        if "Frontal" in leg_key:
+            mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
+            # Set dummy defaults as requested for future proofing
+            for suffix in (
+                "ScanScore", "Notes", "Condition", "Recommendation",
+                "Quality", "QualityCheck",
+                "HoofAngle", "PasternAngle", "AngleDeviation",
+            ):
+                mmpose_fields[f"{leg_key}{suffix}"] = None
+                
+            print(f"📊 [v4] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
+        else:
+            mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
+            mmpose_fields.update(mp_payload)
+    
+            if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
+                mmpose_scores.append(mp_score)
+    
+            print(
+                f"📊 [v4] {leg_key}: P={mp_pred.get('pastern_angle')}° "
+                f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
+            )
 
     for leg_key, image_input in legs.items():
         if not image_input:
+            if "Frontal" in leg_key:
+                mmpose_fields.setdefault(f"{leg_key}ImageUrl", None)
             for suffix in (
                 "ScanScore", "Notes", "Condition", "Recommendation",
                 "Quality", "QualityCheck",
