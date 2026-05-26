@@ -15,7 +15,7 @@ from apis.yolo_predictor import YOLOPredictor
 from apis.image_utils import get_rembg_session
 from apis.routes.v1.analyze import router as analyze_router
 from apis.v2.routes import router as analyze_v2_router
-from apis.v3.routes import router as analyze_v3_router
+# from apis.v3.routes import router as analyze_v3_router  # V3 hidden — shifted to V4
 from apis.v4.routes import router as analyze_v4_router
 
 # Setup Logging
@@ -43,9 +43,10 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize HPAPredictor: {e}")
         app.state.predictor = None
 
-    # 1.5. Rembg Session (used by v3 / legacy; v4 passes remove_bg=False and skips removal)
-    logger.info("🚀 Initializing Rembg Session...")
-    get_rembg_session()
+    # 1.5. Rembg Session (used by v3 / legacy only; disabled since v3 was hidden)
+    # Commenting out to save memory — v4 images are pre-cutout, no rembg needed.
+    # logger.info("🚀 Initializing Rembg Session...")
+    # get_rembg_session()
 
     # 2. YOLO Medium (Disabled for speed/stability)
     app.state.yolo_predictor = None
@@ -121,7 +122,7 @@ async def root():
 # Include versioned routers
 app.include_router(analyze_router, prefix="/api/v1", tags=["Analysis V1"])
 app.include_router(analyze_v2_router, prefix="/api/v2", tags=["Analysis V2 (MMPose)"])
-app.include_router(analyze_v3_router, prefix="/api/v3", tags=["Analysis V3 (Dual Model)"])
+# app.include_router(analyze_v3_router, prefix="/api/v3", tags=["Analysis V3 (Dual Model)"])  # Hidden — use V4
 app.include_router(analyze_v4_router, prefix="/api/v4", tags=["Analysis V4 (Mobile cutout, no rembg)"])
 
 # Keep the legacy endpoint for backward compatibility if needed, or remove it
