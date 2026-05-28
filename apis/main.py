@@ -125,6 +125,9 @@ app.include_router(analyze_v2_router, prefix="/api/v2", tags=["Analysis V2 (MMPo
 # app.include_router(analyze_v3_router, prefix="/api/v3", tags=["Analysis V3 (Dual Model)"])  # Hidden — use V4
 app.include_router(analyze_v4_router, prefix="/api/v4", tags=["Analysis V4 (Mobile cutout, no rembg)"])
 
+from apis.v5.routes import router as analyze_v5_router
+app.include_router(analyze_v5_router, prefix="/api/v5", tags=["Analysis V5 (Advanced Symmetry paired)"])
+
 # Keep the legacy endpoint for backward compatibility if needed, or remove it
 @app.post("/analyze", tags=["Legacy"])
 async def analyze_image(file: UploadFile = File(...)):
