@@ -28,15 +28,15 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
 
     if not prediction.get("success"):
         error_msg = prediction.get("error", "Unknown inference error. Please retake the image.")
-        payload[f"{leg_key}ScanScore"] = None
+        payload[f"{leg_key}ScanScore"] = 0.0
         payload[f"{leg_key}Notes"] = error_msg
         payload[f"{leg_key}Condition"] = None
         payload[f"{leg_key}Recommendation"] = None
-        payload[f"{leg_key}Quality"] = None
+        payload[f"{leg_key}Quality"] = 0.0
         payload[f"{leg_key}QualityCheck"] = "Fail"
-        payload[f"{leg_key}HoofAngle"] = None
-        payload[f"{leg_key}PasternAngle"] = None
-        payload[f"{leg_key}AngleDeviation"] = None
+        payload[f"{leg_key}HoofAngle"] = 0.0
+        payload[f"{leg_key}PasternAngle"] = 0.0
+        payload[f"{leg_key}AngleDeviation"] = 0.0
         return payload, None
 
     p_angle = prediction["pastern_angle"]
@@ -149,11 +149,9 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     for leg_key, mp_pred, frontal_url in inference_results:
         if "Frontal" in leg_key:
             mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
-            for suffix in (
-                "ScanScore", "Notes", "Condition", "Recommendation",
-                "Quality", "QualityCheck",
-                "HoofAngle", "PasternAngle", "AngleDeviation",
-            ):
+            for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
+                mmpose_fields[f"{leg_key}{suffix}"] = 0.0
+            for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
                 
             print(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
@@ -178,11 +176,9 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
         if not (img_orig and img_proc):
             mmpose_fields.setdefault(f"{leg_key}ImageUrl", None)
-            for suffix in (
-                "ScanScore", "Notes", "Condition", "Recommendation",
-                "Quality", "QualityCheck",
-                "HoofAngle", "PasternAngle", "AngleDeviation",
-            ):
+            for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
+                mmpose_fields.setdefault(f"{leg_key}{suffix}", 0.0)
+            for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
                 mmpose_fields.setdefault(f"{leg_key}{suffix}", None)
 
     aggregation = aggregate_scan(mmpose_scores)

@@ -29,7 +29,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'mmpose/custom_configs/rtmpose_hoof_4kp_copy.py')
 CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, 'mmpose/work_dirs/rtmpose_hoof_manual_30_april/epoch_130.pth')
 # YOLO_WEIGHTS = os.path.join(PROJECT_ROOT, 'runs/segment/hpa_v8m_full_v1/weights/best.pt')
-DEVICE = 'cpu'
+DEVICE = 'cuda:0'
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

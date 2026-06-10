@@ -1,7 +1,29 @@
 import base64
 import httpx
+import logging
+import threading
 from apis.logic import HPAPredictor
 
+_frontal_mmpose = None
+_frontal_mmpose_lock = threading.Lock()
+
+def get_frontal_mmpose():
+    global _frontal_mmpose
+    with _frontal_mmpose_lock:
+        if _frontal_mmpose is None:
+            try:
+                import torch
+                from mmpose.apis import MMPoseInferencer
+                device_id = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+                logging.info(f"Loading Frontal MMPose on {device_id}...")
+                _frontal_mmpose = MMPoseInferencer(pose2d='animal', device=device_id)
+                logging.info("Frontal MMPose ready!")
+            except Exception as e:
+                logging.warning(f"Failed to load Frontal MMPose (Fallback geometry will be used): {e}")
+                # Set to False to prevent retrying load on every request if it completely fails
+                _frontal_mmpose = False
+                
+    return _frontal_mmpose if _frontal_mmpose is not False else None
 
 async def get_image_bytes(image_input: str) -> bytes:
     """Fetches image bytes from either a URL or a Base64 string."""
@@ -41,18 +63,34 @@ def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_proces
         with open(tmp_processed, "wb") as f:
             f.write(image_bytes_processed)
             
-        # process_image generates several outputs; we want the '_analyzed.jpg'
-        try:
-            process_image(str(tmp_original), str(tmp_processed), do_debug=False)
-            output_path = Path(tmp_dir) / "original_analyzed.jpg"
+        output_path = Path(tmp_dir) / "original_analyzed.jpg"
+        
+        max_retries = 3
+        inferencer = get_frontal_mmpose()
+        
+        for attempt in range(max_retries):
+            try:
+                process_image(str(tmp_original), str(tmp_processed), do_debug=False, inferencer=inferencer)
+                
+                if output_path.exists():
+                    with open(output_path, "rb") as f:
+                        analyzed_bytes = f.read()
+                    
+                    url = upload_image_to_s3(analyzed_bytes, file_extension="jpg")
+                    if url:
+                        return url
+                    else:
+                        logging.warning(f"Attempt {attempt + 1}: S3 upload failed to return URL.")
+                else:
+                    logging.warning(f"Attempt {attempt + 1}: Frontal analysis failed to generate output image.")
+            except Exception as e:
+                logging.error(f"Attempt {attempt + 1}: Error during frontal symmetry analysis: {e}", exc_info=True)
             
+            # If we reach here, the attempt failed. Clean up output for the next retry
             if output_path.exists():
-                with open(output_path, "rb") as f:
-                    analyzed_bytes = f.read()
-                return upload_image_to_s3(analyzed_bytes, file_extension="jpg")
-            else:
-                print(f"❌ Frontal symmetry analysis failed to generate output.")
-                return ""
-        except Exception as e:
-            print(f"❌ Error during frontal symmetry analysis: {e}")
-            return ""
+                os.remove(output_path)
+                
+        logging.error("All 3 attempts to process the frontal image failed. Gracefully falling back to the original image.")
+        # Fallback: Upload the original unanalyzed image so the user doesn't see a broken gray box
+        fallback_url = upload_image_to_s3(image_bytes_original, file_extension="jpg")
+        return fallback_url if fallback_url else ""

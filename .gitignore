@@ -84,3 +84,4 @@ colab_training.ipynb
 mmpose/work_dirs/
 *.pth
 *.jpg
+frontal_images/
