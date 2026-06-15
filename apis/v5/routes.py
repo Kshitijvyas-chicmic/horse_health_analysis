@@ -14,6 +14,7 @@ from apis.v2.services.aggregator import aggregate_scan
 from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
 import asyncio
 import gc
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
@@ -103,26 +104,48 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     print(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    # Reconstruct leg_data mapping
+    # Reconstruct leg_data mapping and validate uniqueness across legs
+    seen_hashes = set()
     lateral_data = {}
+    
     idx = 0
     for leg_key in lateral_keys:
         res = downloaded[idx]
+        idx += 1
+        
         if isinstance(res, Exception):
             print(f"❌ [v5] Download failed for {leg_key}: {res}")
-        else:
-            lateral_data[leg_key] = res
-        idx += 1
+            continue
+            
+        img_hash = hashlib.sha256(res).hexdigest()
+        if img_hash in seen_hashes:
+            raise HTTPException(status_code=400, detail=f"Duplicate images detected. The image for {leg_key} was already uploaded for another leg.")
+        seen_hashes.add(img_hash)
+        
+        lateral_data[leg_key] = res
         
     frontal_data = {}
     for leg_key in frontal_keys:
         res_orig = downloaded[idx]
         res_proc = downloaded[idx + 1]
+        idx += 2
+        
         if isinstance(res_orig, Exception) or isinstance(res_proc, Exception):
             print(f"❌ [v5] Download failed for {leg_key}")
-        else:
-            frontal_data[leg_key] = (res_orig, res_proc)
-        idx += 2
+            continue
+            
+        hash_orig = hashlib.sha256(res_orig).hexdigest()
+        hash_proc = hashlib.sha256(res_proc).hexdigest()
+        
+        # Check against previously seen hashes (from other legs)
+        if hash_orig in seen_hashes or hash_proc in seen_hashes:
+            raise HTTPException(status_code=400, detail=f"Duplicate images detected. The image for {leg_key} was already uploaded for another leg.")
+            
+        # Add to seen hashes. It's okay if hash_orig == hash_proc for the SAME leg's pair.
+        seen_hashes.add(hash_orig)
+        seen_hashes.add(hash_proc)
+        
+        frontal_data[leg_key] = (res_orig, res_proc)
 
     def process_lateral_leg(leg_key: str, img_bytes: bytes):
         mp = run_leg_inference(predictor, img_bytes)

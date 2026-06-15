@@ -85,3 +85,5 @@ mmpose/work_dirs/
 *.pth
 *.jpg
 frontal_images/
+10_images*/
+*.zip
