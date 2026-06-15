@@ -107,6 +107,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     # Reconstruct leg_data mapping and validate uniqueness across legs
     seen_hashes = set()
     lateral_data = {}
+    duplicate_errors = {}
     
     idx = 0
     for leg_key in lateral_keys:
@@ -119,9 +120,10 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             
         img_hash = hashlib.sha256(res).hexdigest()
         if img_hash in seen_hashes:
-            raise HTTPException(status_code=400, detail=f"Duplicate images detected. The image for {leg_key} was already uploaded for another leg.")
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            continue
+            
         seen_hashes.add(img_hash)
-        
         lateral_data[leg_key] = res
         
     frontal_data = {}
@@ -139,7 +141,8 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         
         # Check against previously seen hashes (from other legs)
         if hash_orig in seen_hashes or hash_proc in seen_hashes:
-            raise HTTPException(status_code=400, detail=f"Duplicate images detected. The image for {leg_key} was already uploaded for another leg.")
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            continue
             
         # Add to seen hashes. It's okay if hash_orig == hash_proc for the SAME leg's pair.
         seen_hashes.add(hash_orig)
@@ -190,19 +193,21 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
                 f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
             )
 
-    # Set nulls for missing inputs
+    # Set nulls for missing inputs or duplicates
     for leg_key, image_input in lateral_legs.items():
-        if not image_input:
-            mp_payload, _ = _build_leg_payload({"success": False, "error": "No image provided"}, leg_key)
+        if not image_input or leg_key in duplicate_errors:
+            err_msg = duplicate_errors.get(leg_key, "No image provided")
+            mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
             
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
-        if not (img_orig and img_proc):
-            mmpose_fields.setdefault(f"{leg_key}ImageUrl", None)
+        if not (img_orig and img_proc) or leg_key in duplicate_errors:
+            mmpose_fields[f"{leg_key}ImageUrl"] = None
             for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
-                mmpose_fields.setdefault(f"{leg_key}{suffix}", 0.0)
+                mmpose_fields[f"{leg_key}{suffix}"] = 0.0
             for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
-                mmpose_fields.setdefault(f"{leg_key}{suffix}", None)
+                err_msg = duplicate_errors.get(leg_key) if suffix == "Notes" else None
+                mmpose_fields[f"{leg_key}{suffix}"] = err_msg
 
     aggregation = aggregate_scan(mmpose_scores)
 
