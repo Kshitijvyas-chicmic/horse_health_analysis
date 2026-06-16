@@ -18,7 +18,7 @@ def aggregate_scan(leg_scores: List[float]) -> dict:
     """
     if not leg_scores:
         return {
-            "scanScore": None,
+            "scanScore": 0.0,
             "notes": "No legs analyzed."
         }
     

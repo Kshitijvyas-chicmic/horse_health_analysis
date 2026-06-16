@@ -14,6 +14,7 @@ from apis.v2.services.aggregator import aggregate_scan
 from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
 import asyncio
 import gc
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
@@ -28,15 +29,15 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
 
     if not prediction.get("success"):
         error_msg = prediction.get("error", "Unknown inference error. Please retake the image.")
-        payload[f"{leg_key}ScanScore"] = None
+        payload[f"{leg_key}ScanScore"] = 0.0
         payload[f"{leg_key}Notes"] = error_msg
         payload[f"{leg_key}Condition"] = None
         payload[f"{leg_key}Recommendation"] = None
-        payload[f"{leg_key}Quality"] = None
+        payload[f"{leg_key}Quality"] = 0.0
         payload[f"{leg_key}QualityCheck"] = "Fail"
-        payload[f"{leg_key}HoofAngle"] = None
-        payload[f"{leg_key}PasternAngle"] = None
-        payload[f"{leg_key}AngleDeviation"] = None
+        payload[f"{leg_key}HoofAngle"] = 0.0
+        payload[f"{leg_key}PasternAngle"] = 0.0
+        payload[f"{leg_key}AngleDeviation"] = 0.0
         return payload, None
 
     p_angle = prediction["pastern_angle"]
@@ -103,26 +104,51 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     print(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    # Reconstruct leg_data mapping
+    # Reconstruct leg_data mapping and validate uniqueness across legs
+    seen_hashes = set()
     lateral_data = {}
+    duplicate_errors = {}
+    
     idx = 0
     for leg_key in lateral_keys:
         res = downloaded[idx]
+        idx += 1
+        
         if isinstance(res, Exception):
             print(f"❌ [v5] Download failed for {leg_key}: {res}")
-        else:
-            lateral_data[leg_key] = res
-        idx += 1
+            continue
+            
+        img_hash = hashlib.sha256(res).hexdigest()
+        if img_hash in seen_hashes:
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            continue
+            
+        seen_hashes.add(img_hash)
+        lateral_data[leg_key] = res
         
     frontal_data = {}
     for leg_key in frontal_keys:
         res_orig = downloaded[idx]
         res_proc = downloaded[idx + 1]
+        idx += 2
+        
         if isinstance(res_orig, Exception) or isinstance(res_proc, Exception):
             print(f"❌ [v5] Download failed for {leg_key}")
-        else:
-            frontal_data[leg_key] = (res_orig, res_proc)
-        idx += 2
+            continue
+            
+        hash_orig = hashlib.sha256(res_orig).hexdigest()
+        hash_proc = hashlib.sha256(res_proc).hexdigest()
+        
+        # Check against previously seen hashes (from other legs)
+        if hash_orig in seen_hashes or hash_proc in seen_hashes:
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            continue
+            
+        # Add to seen hashes. It's okay if hash_orig == hash_proc for the SAME leg's pair.
+        seen_hashes.add(hash_orig)
+        seen_hashes.add(hash_proc)
+        
+        frontal_data[leg_key] = (res_orig, res_proc)
 
     def process_lateral_leg(leg_key: str, img_bytes: bytes):
         mp = run_leg_inference(predictor, img_bytes)
@@ -149,11 +175,9 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     for leg_key, mp_pred, frontal_url in inference_results:
         if "Frontal" in leg_key:
             mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
-            for suffix in (
-                "ScanScore", "Notes", "Condition", "Recommendation",
-                "Quality", "QualityCheck",
-                "HoofAngle", "PasternAngle", "AngleDeviation",
-            ):
+            for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
+                mmpose_fields[f"{leg_key}{suffix}"] = 0.0
+            for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
                 
             print(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
@@ -169,21 +193,21 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
                 f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
             )
 
-    # Set nulls for missing inputs
+    # Set nulls for missing inputs or duplicates
     for leg_key, image_input in lateral_legs.items():
-        if not image_input:
-            mp_payload, _ = _build_leg_payload({"success": False, "error": "No image provided"}, leg_key)
+        if not image_input or leg_key in duplicate_errors:
+            err_msg = duplicate_errors.get(leg_key, "No image provided")
+            mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
             
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
-        if not (img_orig and img_proc):
-            mmpose_fields.setdefault(f"{leg_key}ImageUrl", None)
-            for suffix in (
-                "ScanScore", "Notes", "Condition", "Recommendation",
-                "Quality", "QualityCheck",
-                "HoofAngle", "PasternAngle", "AngleDeviation",
-            ):
-                mmpose_fields.setdefault(f"{leg_key}{suffix}", None)
+        if not (img_orig and img_proc) or leg_key in duplicate_errors:
+            mmpose_fields[f"{leg_key}ImageUrl"] = None
+            for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
+                mmpose_fields[f"{leg_key}{suffix}"] = 0.0
+            for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
+                err_msg = duplicate_errors.get(leg_key) if suffix == "Notes" else None
+                mmpose_fields[f"{leg_key}{suffix}"] = err_msg
 
     aggregation = aggregate_scan(mmpose_scores)
 

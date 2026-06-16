@@ -9,6 +9,9 @@ import sys
 from PIL import Image as PILImage
 from transformers import pipeline as hf_pipeline
 from mmpose.apis import MMPoseInferencer
+import threading
+
+_depth_lock = threading.Lock()
 
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -24,8 +27,10 @@ _depth_pipe = None
 def get_depth_pipe():
     global _depth_pipe
     if _depth_pipe is None:
-        logging.info("Loading Depth Anything V2 Small …")
-        _depth_pipe = hf_pipeline("depth-estimation", model=_DEPTH_MODEL_ID, device=-1)
+        import torch
+        device_id = 0 if torch.cuda.is_available() else -1
+        logging.info(f"Loading Depth Anything V2 Small on device {device_id} …")
+        _depth_pipe = hf_pipeline("depth-estimation", model=_DEPTH_MODEL_ID, device=device_id)
         logging.info("Depth Anything V2 ready.")
     return _depth_pipe
 
@@ -49,7 +54,10 @@ def estimate_depth(image_bgr: np.ndarray,
     logging.info("Running Depth Anything V2 …")
     rgb = cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB)
     pil_img = PILImage.fromarray(rgb)
-    result = get_depth_pipe()(pil_img)
+    
+    with _depth_lock:
+        result = get_depth_pipe()(pil_img)
+        
     depth_np = np.array(result["depth"]).astype(np.float32)
 
     if depth_np.shape[0] != h or depth_np.shape[1] != w:
