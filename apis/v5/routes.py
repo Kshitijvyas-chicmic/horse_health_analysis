@@ -120,7 +120,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             
         img_hash = hashlib.sha256(res).hexdigest()
         if img_hash in seen_hashes:
-            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload different images for the frontal and lateral views of this horse leg."
             continue
             
         seen_hashes.add(img_hash)
@@ -141,7 +141,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         
         # Check against previously seen hashes (from other legs)
         if hash_orig in seen_hashes or hash_proc in seen_hashes:
-            duplicate_errors[leg_key] = "Duplicate image detected. Please upload a unique image for this leg."
+            duplicate_errors[leg_key] = "Duplicate image detected. Please upload different images for the frontal and lateral views of this horse leg."
             continue
             
         # Add to seen hashes. It's okay if hash_orig == hash_proc for the SAME leg's pair.
@@ -196,7 +196,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     # Set nulls for missing inputs or duplicates
     for leg_key, image_input in lateral_legs.items():
         if not image_input or leg_key in duplicate_errors:
-            err_msg = duplicate_errors.get(leg_key, "No image provided")
+            err_msg = duplicate_errors.get(leg_key, "No lateral image provided. Please upload an image.")
             mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
             
