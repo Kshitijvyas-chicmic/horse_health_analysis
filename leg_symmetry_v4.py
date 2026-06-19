@@ -1037,7 +1037,7 @@ def find_leg_landmarks(leg_mask: np.ndarray) -> dict | None:
 
     # --- P3: Coronet band (Fallback) ---
     # The coronet band is the top of the hoof capsule, which is below the narrow pastern.
-    coronet_idx = pastern_idx + int((base_idx - pastern_idx) * 0.40)
+    coronet_idx = pastern_idx + int((base_idx - pastern_idx) * 0.53)
 
     # --- P1: Top of cannon bone ---
     # The cannon bone is the straight, uniform section between the knee and fetlock.
@@ -1070,7 +1070,11 @@ def find_leg_landmarks(leg_mask: np.ndarray) -> dict | None:
     p1 = (int(round(raw_cx[p1_idx])), int(y_coords[p1_idx]))
     p2 = (scx(fetlock_idx), int(y_coords[fetlock_idx]))
     p3 = (scx(coronet_idx), int(y_coords[coronet_idx]))
-    p4 = (scx(base_idx),    int(y_coords[base_idx]))
+    
+    # User requested P4 be moved to the absolute bottom of the hoof (ground line).
+    # We use scx(base_idx) for the X-coordinate so it stays perfectly centered on the solid hoof mass,
+    # but we push the Y-coordinate to the very bottom row (bottom_y).
+    p4 = (scx(base_idx), int(bottom_y))
 
     # ----------------------------------------------------------------
     # Hoof wall edge points (left & right) at coronet and base rows
@@ -1373,7 +1377,11 @@ def draw_joint_overlay(img: np.ndarray, points: dict, dominant: str | None = Non
 
     # Ground line through P4 (solid pink)
     margin = max(10, (p3R[0] - p3L[0]) // 4)
-    cv2.line(img, (p4L[0] - margin, p4[1]), (p4R[0] + margin, p4[1]), COLOR_PINK, 2, cv2.LINE_AA)
+    cv2.line(img, (p4L[0] - margin, p4L[1]), (p4R[0] + margin, p4R[1]), COLOR_PINK, 2, cv2.LINE_AA)
+    
+    # User requested V-shape hoof bottom lines connecting P4L to P4, and P4R to P4
+    cv2.line(img, p4L, p4, COLOR_PINK, 2, cv2.LINE_AA)
+    cv2.line(img, p4R, p4, COLOR_PINK, 2, cv2.LINE_AA)
 
     # Base Angle
     base_angle = calculate_angle(p4L, p4, p4R)
@@ -1655,7 +1663,7 @@ def apply_overlay(img: np.ndarray, green_mask: np.ndarray,
 # --- V3 LOGIC END ---
 
 def process_image(original_path: str, processed_path: str,
-                  do_debug: bool = False, inferencer=None) -> None:
+                  do_debug: bool = False, inferencer=None) -> "Path | None":
     """Analyse horse leg symmetry.
 
     Parameters
@@ -1800,7 +1808,7 @@ def process_image(original_path: str, processed_path: str,
         if lm is None:
             logging.warning("No front leg found for %s", p.name)
             save(f"{p.stem}_analyzed.jpg", img)
-            return
+            return None
         lm = trim_upper_leg_fraction(lm, 0.20)
         leg_masks = [lm]
         leg_infos = [{'mask': lm, 'knee': (w / 2.0, 0.0), 'hoof': (w / 2.0, float(h - 1))}]
@@ -1891,7 +1899,8 @@ def process_image(original_path: str, processed_path: str,
         logging.info("Leg %d angles — Fetlock: %.1f deg, HPA: %.1f deg",
                      i + 1, angles['fetlock_angle'], angles['hpa_angle'])
 
-    save(f"{p.stem}_analyzed.jpg", out)
+    analyzed_filename = f"{p.stem}_analyzed.jpg"
+    save(analyzed_filename, out)
 
     # --- Same landmarks, drawn on the depth map itself (Image-3 style) ---
     # Pixel coordinates are 1:1 with the original since depth_map/depth_color
@@ -1911,6 +1920,7 @@ def process_image(original_path: str, processed_path: str,
         save(f"{p.stem}_debug.png", dbg)
 
     logging.info("Saved %s_analyzed.jpg", p.stem)
+    return out_dir / analyzed_filename
 
 
 # ---------------------------------------------------------------------------
