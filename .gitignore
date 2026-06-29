@@ -84,6 +84,8 @@ colab_training.ipynb
 mmpose/work_dirs/
 *.pth
 *.jpg
+
+# ─── Test Data (Temporary) ────────────────────
 frontal_images/
 10_images*/
 *.zip
