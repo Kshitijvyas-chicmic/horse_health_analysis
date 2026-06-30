@@ -99,12 +99,21 @@ async def analyze_v4(request: AdvancedScanRequest, req: Request):
             leg_data[leg_key] = downloaded[i]
 
     def process_single_leg(leg_key: str, img_bytes: bytes):
-        if "Frontal" in leg_key:
-            url = process_frontal_leg_symmetry(img_bytes)
-            return leg_key, None, url
-        else:
-            mp = run_leg_inference(predictor, img_bytes)
-            return leg_key, mp, None
+        try:
+            if "Frontal" in leg_key:
+                url = process_frontal_leg_symmetry(img_bytes)
+                return leg_key, None, url
+            else:
+                mp = run_leg_inference(predictor, img_bytes)
+                return leg_key, mp, None
+        except Exception as e:
+            if "Frontal" in leg_key:
+                print(f"❌ [v4] Frontal inference failed for {leg_key}: {e}")
+                err_msg = "We couldn't analyze the symmetry. Please ensure the photo is clear and try again."
+                return leg_key, err_msg, None
+            else:
+                err_msg = "We couldn't analyze this image. Please ensure the photo is clear and taken from the correct angle."
+                return leg_key, {"success": False, "error": err_msg}, None
 
     print(f"🧠 [v4] MMPose inference (no rembg) on {len(leg_data)} slot(s)...")
     loop = asyncio.get_event_loop()
@@ -118,19 +127,24 @@ async def analyze_v4(request: AdvancedScanRequest, req: Request):
     mmpose_fields: dict = {}
     mmpose_scores: list = []
 
-    for leg_key, mp_pred, frontal_url in inference_results:
+    for leg_key, payload, frontal_url in inference_results:
         if "Frontal" in leg_key:
             mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
             # Set dummy defaults as requested for future proofing
             for suffix in (
-                "ScanScore", "Notes", "Condition", "Recommendation",
-                "Quality", "QualityCheck",
-                "HoofAngle", "PasternAngle", "AngleDeviation",
+                "ScanScore", "HoofAngle", "PasternAngle", "AngleDeviation",
             ):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
                 
+            mmpose_fields[f"{leg_key}Notes"] = payload if isinstance(payload, str) else None
+            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else None
+            mmpose_fields[f"{leg_key}Quality"] = None
+            mmpose_fields[f"{leg_key}Condition"] = None
+            mmpose_fields[f"{leg_key}Recommendation"] = None
+                
             print(f"📊 [v4] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
         else:
+            mp_pred = payload
             mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
             mmpose_fields.update(mp_payload)
     
