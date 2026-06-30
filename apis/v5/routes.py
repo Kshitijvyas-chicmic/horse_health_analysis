@@ -104,59 +104,44 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     print(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    # Reconstruct leg_data mapping and validate uniqueness across legs
-    seen_hashes = set()
+    # Reconstruct leg_data mapping
     lateral_data = {}
-    duplicate_errors = {}
-    
     idx = 0
     for leg_key in lateral_keys:
         res = downloaded[idx]
         idx += 1
-        
         if isinstance(res, Exception):
             print(f"❌ [v5] Download failed for {leg_key}: {res}")
-            continue
+        else:
+            lateral_data[leg_key] = res
             
-        img_hash = hashlib.sha256(res).hexdigest()
-        if img_hash in seen_hashes:
-            duplicate_errors[leg_key] = "Duplicate image detected. Please upload different images for the frontal and lateral views of this horse leg."
-            continue
-            
-        seen_hashes.add(img_hash)
-        lateral_data[leg_key] = res
-        
     frontal_data = {}
     for leg_key in frontal_keys:
         res_orig = downloaded[idx]
         res_proc = downloaded[idx + 1]
         idx += 2
-        
         if isinstance(res_orig, Exception) or isinstance(res_proc, Exception):
             print(f"❌ [v5] Download failed for {leg_key}")
-            continue
-            
-        hash_orig = hashlib.sha256(res_orig).hexdigest()
-        hash_proc = hashlib.sha256(res_proc).hexdigest()
-        
-        # Check against previously seen hashes (from other legs)
-        if hash_orig in seen_hashes or hash_proc in seen_hashes:
-            duplicate_errors[leg_key] = "Duplicate image detected. Please upload different images for the frontal and lateral views of this horse leg."
-            continue
-            
-        # Add to seen hashes. It's okay if hash_orig == hash_proc for the SAME leg's pair.
-        seen_hashes.add(hash_orig)
-        seen_hashes.add(hash_proc)
-        
-        frontal_data[leg_key] = (res_orig, res_proc)
+        else:
+            frontal_data[leg_key] = (res_orig, res_proc)
 
     def process_lateral_leg(leg_key: str, img_bytes: bytes):
-        mp = run_leg_inference(predictor, img_bytes)
+        try:
+            mp = run_leg_inference(predictor, img_bytes)
+        except Exception as e:
+            print(f"❌ [v5] Lateral inference failed for {leg_key}: {e}")
+            mp = {"success": False, "error": "We couldn't analyze this image. Please ensure the photo is clear and taken from the correct angle."}
         return leg_key, mp, None
 
     def process_frontal_leg(leg_key: str, img_orig: bytes, img_proc: bytes):
-        url = process_frontal_leg_symmetry(img_orig, img_proc)
-        return leg_key, None, url
+        try:
+            url = process_frontal_leg_symmetry(img_orig, img_proc)
+            err_msg = None
+        except Exception as e:
+            url = None
+            err_msg = "We couldn't analyze the symmetry. Please ensure the photo is clear and try again."
+            print(f"❌ [v5] Frontal inference failed for {leg_key}: {e}")
+        return leg_key, err_msg, url
 
     print(f"🧠 [v5] Processing {len(lateral_data)} lateral and {len(frontal_data)} frontal slot(s)...")
     loop = asyncio.get_event_loop()
@@ -172,16 +157,21 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     mmpose_fields: dict = {}
     mmpose_scores: list = []
 
-    for leg_key, mp_pred, frontal_url in inference_results:
+    for leg_key, payload, frontal_url in inference_results:
         if "Frontal" in leg_key:
             mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
             for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = 0.0
-            for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
+                
+            mmpose_fields[f"{leg_key}Notes"] = payload if isinstance(payload, str) else None
+            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else None
+            
+            for suffix in ("Condition", "Recommendation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
                 
             print(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
         else:
+            mp_pred = payload
             mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
             mmpose_fields.update(mp_payload)
     
@@ -193,21 +183,20 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
                 f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
             )
 
-    # Set nulls for missing inputs or duplicates
+    # Set nulls for missing inputs
     for leg_key, image_input in lateral_legs.items():
-        if not image_input or leg_key in duplicate_errors:
-            err_msg = duplicate_errors.get(leg_key, "No lateral image provided. Please upload an image.")
+        if not image_input:
+            err_msg = "No lateral image provided. Please upload an image."
             mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
             
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
-        if not (img_orig and img_proc) or leg_key in duplicate_errors:
+        if not (img_orig and img_proc):
             mmpose_fields[f"{leg_key}ImageUrl"] = None
             for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = 0.0
             for suffix in ("Notes", "Condition", "Recommendation", "QualityCheck"):
-                err_msg = duplicate_errors.get(leg_key) if suffix == "Notes" else None
-                mmpose_fields[f"{leg_key}{suffix}"] = err_msg
+                mmpose_fields[f"{leg_key}{suffix}"] = None
 
     aggregation = aggregate_scan(mmpose_scores)
 
