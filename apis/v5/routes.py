@@ -5,6 +5,7 @@ API v4 — Same clinical flow as v3, for mobile pre-cutout images.
 - Overall scanScore uses lateral slots only (same as v3).
 """
 
+import logging
 from fastapi import APIRouter, Request, HTTPException
 from apis.v5.schemas import AdvancedScanRequest, AdvancedScanResponse, ModelResult
 from apis.v5.services.inference import get_image_bytes, run_leg_inference, process_frontal_leg_symmetry
@@ -101,7 +102,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             fetch_tasks.append(get_image_bytes(img_orig))
             fetch_tasks.append(get_image_bytes(img_proc))
 
-    print(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
+    logging.info(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
     # Reconstruct leg_data mapping
@@ -111,7 +112,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         res = downloaded[idx]
         idx += 1
         if isinstance(res, Exception):
-            print(f"❌ [v5] Download failed for {leg_key}: {res}")
+            logging.error(f"❌ [v5] Download failed for {leg_key}: {res}")
         else:
             lateral_data[leg_key] = res
             
@@ -121,7 +122,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         res_proc = downloaded[idx + 1]
         idx += 2
         if isinstance(res_orig, Exception) or isinstance(res_proc, Exception):
-            print(f"❌ [v5] Download failed for {leg_key}")
+            logging.error(f"❌ [v5] Download failed for {leg_key}")
         else:
             frontal_data[leg_key] = (res_orig, res_proc)
 
@@ -129,7 +130,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         try:
             mp = run_leg_inference(predictor, img_bytes)
         except Exception as e:
-            print(f"❌ [v5] Lateral inference failed for {leg_key}: {e}")
+            logging.error(f"❌ [v5] Lateral inference failed for {leg_key}: {e}")
             mp = {"success": False, "error": "We couldn't analyze this image. Please ensure the photo is clear and taken from the correct angle."}
         return leg_key, mp, None
 
@@ -140,10 +141,10 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         except Exception as e:
             url = None
             err_msg = "We couldn't analyze the symmetry. Please ensure the photo is clear and try again."
-            print(f"❌ [v5] Frontal inference failed for {leg_key}: {e}")
+            logging.error(f"❌ [v5] Frontal inference failed for {leg_key}: {e}")
         return leg_key, err_msg, url
 
-    print(f"🧠 [v5] Processing {len(lateral_data)} lateral and {len(frontal_data)} frontal slot(s)...")
+    logging.info(f"🧠 [v5] Processing {len(lateral_data)} lateral and {len(frontal_data)} frontal slot(s)...")
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=4) as pool:
         tasks = []
@@ -164,12 +165,12 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
                 mmpose_fields[f"{leg_key}{suffix}"] = 0.0
                 
             mmpose_fields[f"{leg_key}Notes"] = payload if isinstance(payload, str) else None
-            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else None
+            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else "Pass"
             
             for suffix in ("Condition", "Recommendation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
                 
-            print(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
+            logging.info(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
         else:
             mp_pred = payload
             mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
@@ -178,10 +179,13 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
                 mmpose_scores.append(mp_score)
     
-            print(
-                f"📊 [v5] {leg_key}: P={mp_pred.get('pastern_angle')}° "
-                f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
-            )
+            if mp_pred.get("success") is False:
+                logging.error(f"❌ [v5] {leg_key} Lateral Inference Failed: {mp_pred.get('error', 'Unknown Error')}")
+            else:
+                logging.info(
+                    f"📊 [v5] {leg_key}: P={mp_pred.get('pastern_angle')}° "
+                    f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
+                )
 
     # Set nulls for missing inputs
     for leg_key, image_input in lateral_legs.items():
