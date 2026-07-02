@@ -70,7 +70,7 @@ app = FastAPI(
     servers=[
         {"url": "https://horse-health.projectlabs.in", "description": "Production server"},
         {"url": "https://horse-health-new.projectlabs.in", "description": "Production new server"},
-        {"url": "http://192.180.3.178:8001", "description": "Test server for sharing"}
+        {"url": "http://192.180.2.140:8001", "description": "Test server for sharing"}
     ],
     redirect_slashes=False,  # CRITICAL: Prevent 307 redirects which break CORS preflights
     lifespan=lifespan
@@ -83,7 +83,7 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # 2. Request Logging
 @app.middleware("http")
 async def log_requests(request, call_next):
-    print(f"📡 Request: {request.method} {request.url}")
+    logger.info(f"📡 Request: {request.method} {request.url}")
     return await call_next(request)
 
 # 3. CORS Middleware (Outer Middleware - Added LAST)
@@ -148,11 +148,11 @@ async def analyze_image(file: UploadFile = File(...)):
         results = predictor.predict(contents)
         
         # Log Results for Validation
-        print(f"📊 Legacy API Result [{file.filename}]:")
-        print(f"   - pastern_angle: {results.get('pastern_angle')}")
-        print(f"   - hoof_angle: {results.get('hoof_angle')}")
-        print(f"   - hpa_dev: {results.get('hpa_dev')}")
-        print(f"   - model_confidence: {results.get('model_confidence')}")
+        logger.info(f"📊 Legacy API Result [{file.filename}]:")
+        logger.info(f"   - pastern_angle: {results.get('pastern_angle')}")
+        logger.info(f"   - hoof_angle: {results.get('hoof_angle')}")
+        logger.info(f"   - hpa_dev: {results.get('hpa_dev')}")
+        logger.info(f"   - model_confidence: {results.get('model_confidence')}")
         
         return JSONResponse(content=results)
     except Exception as e:
