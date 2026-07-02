@@ -76,13 +76,13 @@ class HPAPredictor:
     def predict(self, img_bytes, remove_bg=True):
         # Prevent empty or None buffers
         if not img_bytes:
-            raise ValueError("Empty image buffer provided")
+            return {"success": False, "error": "Empty image buffer provided. Please try uploading the image again."}
             
         # Convert bytes to cv2 image
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
-            raise ValueError("Could not decode image")
+            return {"success": False, "error": "Could not decode image. Please ensure the file is a valid image."}
             
         img_h, img_w = img.shape[:2]
         

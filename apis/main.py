@@ -19,7 +19,12 @@ from apis.v2.routes import router as analyze_v2_router
 from apis.v4.routes import router as analyze_v4_router
 
 # Setup Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 # Get Absolute Project Root

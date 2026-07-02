@@ -1664,6 +1664,24 @@ def apply_overlay(img: np.ndarray, green_mask: np.ndarray,
 
 def process_image(original_path: str, processed_path: str,
                   do_debug: bool = False, inferencer=None) -> "Path | None":
+    """Safety wrapper: guarantees _analyzed.jpg is created even on hard crash."""
+    p = Path(original_path)
+    img = cv2.imread(str(p))
+    if img is None:
+        logging.error("Cannot read original image: %s", p)
+        return None
+
+    try:
+        return _process_image_internal(original_path, processed_path, do_debug, inferencer)
+    except Exception as e:
+        logging.exception("Catastrophic failure processing %s: %s", p.name, e)
+        out_path = p.parent / f"{p.stem}_analyzed.jpg"
+        cv2.imwrite(str(out_path), img)
+        logging.warning("Saved original unannotated image as fallback to %s", out_path)
+        return out_path
+
+def _process_image_internal(original_path: str, processed_path: str,
+                  do_debug: bool = False, inferencer=None) -> "Path | None":
     """Analyse horse leg symmetry.
 
     Parameters
