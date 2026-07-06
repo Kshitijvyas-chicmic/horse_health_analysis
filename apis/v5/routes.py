@@ -7,8 +7,8 @@ API v4 — Same clinical flow as v3, for mobile pre-cutout images.
 
 import logging
 from fastapi import APIRouter, Request, HTTPException
-from apis.v5.schemas import AdvancedScanRequest, AdvancedScanResponse, ModelResult
-from apis.v5.services.inference import get_image_bytes, run_leg_inference, process_frontal_leg_symmetry
+from apis.v5.schemas import AdvancedScanRequest, AdvancedScanResponseV5, ModelResultV5
+from apis.v5.services.inference import get_image_bytes, run_leg_inference, process_frontal_leg_symmetry, process_lateral_leg_overlay
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
@@ -65,18 +65,20 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
     return payload, score
 
 
-@router.post("/analyze", response_model=AdvancedScanResponse)
+@router.post("/analyze", response_model=AdvancedScanResponseV5)
 async def analyze_v5(request: AdvancedScanRequest, req: Request):
     predictor = req.app.state.predictor
 
     if not predictor:
         raise HTTPException(status_code=503, detail="MMPose model not initialized")
 
-    lateral_legs = {
-        "frontLeft": request.frontLeftLateral,
-        "frontRight": request.frontRightLateral,
-        "backLeft": request.backLeftLateral,
-        "backRight": request.backRightLateral,
+    # --- Map lateral pairs: original + processed (bg-removed) ---
+    # If only one is provided, the image is treated as the processed one (backward-compat).
+    lateral_pairs = {
+        "frontLeft":  (request.frontLeftLateral,  request.frontLeftLateralProcessed),
+        "frontRight": (request.frontRightLateral, request.frontRightLateralProcessed),
+        "backLeft":   (request.backLeftLateral,   request.backLeftLateralProcessed),
+        "backRight":  (request.backRightLateral,  request.backRightLateralProcessed),
     }
 
     frontal_pairs = {
@@ -88,13 +90,28 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
 
     # Gather tasks for download
     fetch_tasks = []
-    
+
     lateral_keys = []
-    for leg_key, image_input in lateral_legs.items():
-        if image_input:
+    # Track whether each lateral slot has an overlay pair or just a single processed image
+    lateral_has_overlay = {}
+    for leg_key, (img_orig, img_proc) in lateral_pairs.items():
+        if img_orig and img_proc:
+            # Both provided: original for drawing, processed for inference
             lateral_keys.append(leg_key)
-            fetch_tasks.append(get_image_bytes(image_input))
-            
+            fetch_tasks.append(get_image_bytes(img_orig))
+            fetch_tasks.append(get_image_bytes(img_proc))
+            lateral_has_overlay[leg_key] = True
+        elif img_proc:
+            # Only processed: run inference on it, no overlay
+            lateral_keys.append(leg_key)
+            fetch_tasks.append(get_image_bytes(img_proc))
+            lateral_has_overlay[leg_key] = False
+        elif img_orig:
+            # Only original provided (backward-compat with old clients)
+            lateral_keys.append(leg_key)
+            fetch_tasks.append(get_image_bytes(img_orig))
+            lateral_has_overlay[leg_key] = False
+
     frontal_keys = []
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
         if img_orig and img_proc:
@@ -105,17 +122,27 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     logging.info(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    # Reconstruct leg_data mapping
-    lateral_data = {}
+    # Reconstruct lateral_data mapping
+    lateral_data = {}  # leg_key -> bytes or (bytes_orig, bytes_proc)
     idx = 0
     for leg_key in lateral_keys:
-        res = downloaded[idx]
-        idx += 1
-        if isinstance(res, Exception):
-            logging.error(f"❌ [v5] Download failed for {leg_key}: {res}")
+        has_overlay = lateral_has_overlay[leg_key]
+        if has_overlay:
+            res_orig = downloaded[idx]
+            res_proc = downloaded[idx + 1]
+            idx += 2
+            if isinstance(res_orig, Exception) or isinstance(res_proc, Exception):
+                logging.error(f"❌ [v5] Download failed for lateral {leg_key}")
+            else:
+                lateral_data[leg_key] = (res_orig, res_proc)
         else:
-            lateral_data[leg_key] = res
-            
+            res = downloaded[idx]
+            idx += 1
+            if isinstance(res, Exception):
+                logging.error(f"❌ [v5] Download failed for lateral {leg_key}: {res}")
+            else:
+                lateral_data[leg_key] = res  # single bytes
+
     frontal_data = {}
     for leg_key in frontal_keys:
         res_orig = downloaded[idx]
@@ -126,13 +153,22 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         else:
             frontal_data[leg_key] = (res_orig, res_proc)
 
-    def process_lateral_leg(leg_key: str, img_bytes: bytes):
+    def process_lateral_leg(leg_key: str, img_data):
+        """Handles both single-image and overlay-pair lateral inference."""
         try:
-            mp = run_leg_inference(predictor, img_bytes)
+            if isinstance(img_data, tuple):
+                # Overlay mode: original + processed
+                img_orig_bytes, img_proc_bytes = img_data
+                mp, url = process_lateral_leg_overlay(predictor, img_orig_bytes, img_proc_bytes)
+            else:
+                # Legacy / single-image mode
+                mp = run_leg_inference(predictor, img_data)
+                url = None
         except Exception as e:
             logging.error(f"❌ [v5] Lateral inference failed for {leg_key}: {e}")
             mp = {"success": False, "error": "We couldn't analyze this image. Please ensure the photo is clear and taken from the correct angle."}
-        return leg_key, mp, None
+            url = None
+        return leg_key, mp, url
 
     def process_frontal_leg(leg_key: str, img_orig: bytes, img_proc: bytes):
         try:
@@ -148,8 +184,8 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=4) as pool:
         tasks = []
-        for k, b in lateral_data.items():
-            tasks.append(loop.run_in_executor(pool, process_lateral_leg, k, b))
+        for k, img_data in lateral_data.items():
+            tasks.append(loop.run_in_executor(pool, process_lateral_leg, k, img_data))
         for k, (b_orig, b_proc) in frontal_data.items():
             tasks.append(loop.run_in_executor(pool, process_frontal_leg, k, b_orig, b_proc))
             
@@ -158,38 +194,38 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     mmpose_fields: dict = {}
     mmpose_scores: list = []
 
-    for leg_key, payload, frontal_url in inference_results:
+    for leg_key, payload, url in inference_results:
         if "Frontal" in leg_key:
-            mmpose_fields[f"{leg_key}ImageUrl"] = frontal_url
+            mmpose_fields[f"{leg_key}ImageUrl"] = url
             for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = 0.0
-                
             mmpose_fields[f"{leg_key}Notes"] = payload if isinstance(payload, str) else None
             mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else "Pass"
-            
             for suffix in ("Condition", "Recommendation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
-                
-            logging.info(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={frontal_url}")
+            logging.info(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={url}")
         else:
             mp_pred = payload
             mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
             mmpose_fields.update(mp_payload)
-    
+            # Store the lateral annotated image URL if one was returned
+            if url:
+                mmpose_fields[f"{leg_key}ImageUrl"] = url
+
             if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
                 mmpose_scores.append(mp_score)
-    
+
             if mp_pred.get("success") is False:
                 logging.error(f"❌ [v5] {leg_key} Lateral Inference Failed: {mp_pred.get('error', 'Unknown Error')}")
             else:
                 logging.info(
                     f"📊 [v5] {leg_key}: P={mp_pred.get('pastern_angle')}° "
-                    f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score}"
+                    f"H={mp_pred.get('hoof_angle')}° Dev={mp_pred.get('hpa_dev')}° Score={mp_score} URL={url}"
                 )
 
-    # Set nulls for missing inputs
-    for leg_key, image_input in lateral_legs.items():
-        if not image_input:
+    # Set nulls for missing lateral inputs
+    for leg_key, (img_orig, img_proc) in lateral_pairs.items():
+        if not (img_orig or img_proc):
             err_msg = "No lateral image provided. Please upload an image."
             mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
@@ -209,8 +245,8 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     del downloaded
     gc.collect()
 
-    return AdvancedScanResponse(
-        mmpose=ModelResult(**mmpose_fields),
+    return AdvancedScanResponseV5(
+        mmpose=ModelResultV5(**mmpose_fields),
         yolo=None,
         scanScore=aggregation["scanScore"],
         notes=aggregation["notes"],
