@@ -182,7 +182,7 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
 
     logging.info(f"🧠 [v5] Processing {len(lateral_data)} lateral and {len(frontal_data)} frontal slot(s)...")
     loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=1) as pool:
         tasks = []
         for k, img_data in lateral_data.items():
             tasks.append(loop.run_in_executor(pool, process_lateral_leg, k, img_data))
