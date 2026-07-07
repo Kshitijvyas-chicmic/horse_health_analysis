@@ -53,29 +53,29 @@ def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_proces
     from pathlib import Path
     from leg_symmetry_v3 import process_image
     from apis.v5.services.upload import upload_image_to_s3
-    
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_original = Path(tmp_dir) / "original.jpg"
         with open(tmp_original, "wb") as f:
             f.write(image_bytes_original)
-            
+
         tmp_processed = Path(tmp_dir) / "processed.png"
         with open(tmp_processed, "wb") as f:
             f.write(image_bytes_processed)
-            
+
         output_path = Path(tmp_dir) / "original_analyzed.jpg"
-        
+
         max_retries = 3
         inferencer = get_frontal_mmpose()
-        
+
         for attempt in range(max_retries):
             try:
                 process_image(str(tmp_original), str(tmp_processed), do_debug=False, inferencer=inferencer)
-                
+
                 if output_path.exists():
                     with open(output_path, "rb") as f:
                         analyzed_bytes = f.read()
-                    
+
                     url = upload_image_to_s3(analyzed_bytes, file_extension="jpg")
                     if url:
                         return url
@@ -85,12 +85,52 @@ def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_proces
                     logging.warning(f"Attempt {attempt + 1}: Frontal analysis failed to generate output image.")
             except Exception as e:
                 logging.error(f"Attempt {attempt + 1}: Error during frontal symmetry analysis: {e}", exc_info=True)
-            
+
             # If we reach here, the attempt failed. Clean up output for the next retry
             if output_path.exists():
                 os.remove(output_path)
-                
+
         logging.error("All 3 attempts to process the frontal image failed. Gracefully falling back to the original image.")
         # Fallback: Upload the original unanalyzed image so the user doesn't see a broken gray box
         fallback_url = upload_image_to_s3(image_bytes_original, file_extension="jpg")
         return fallback_url if fallback_url else ""
+
+
+def process_lateral_leg_overlay(
+    predictor: HPAPredictor,
+    image_bytes_original: bytes,
+    image_bytes_processed: bytes,
+) -> tuple[dict, str]:
+    """
+    Runs HPA inference on the background-removed lateral image (processed),
+    then draws the keypoints/angle lines on the original lateral image and
+    uploads it to S3.
+
+    Returns:
+        (metrics_dict, s3_url)
+        metrics_dict — same structure as HPAPredictor.predict()
+        s3_url       — URL of the annotated original image (or "" on failure)
+    """
+    from apis.v5.services.upload import upload_image_to_s3
+
+    # Run inference on the background-removed image; draw overlay on original
+    metrics = predictor.predict(
+        image_bytes_processed,
+        remove_bg=False,
+        orig_img_bytes=image_bytes_original,
+    )
+
+    url = ""
+    output_b64 = metrics.get("image_base64")
+    logging.info(f"🖼️ [lateral_overlay] image_base64 present: {bool(output_b64)}, success: {metrics.get('success')}")
+    if output_b64:
+        try:
+            analyzed_bytes = base64.b64decode(output_b64)
+            url = upload_image_to_s3(analyzed_bytes, file_extension="jpg", folder="lateral_overlays") or ""
+            logging.info(f"🖼️ [lateral_overlay] S3 upload result: {url!r}")
+        except Exception as e:
+            logging.error(f"Failed to upload lateral overlay image to S3: {e}", exc_info=True)
+    else:
+        logging.warning("🖼️ [lateral_overlay] No image_base64 in metrics — skipping S3 upload.")
+
+    return metrics, url

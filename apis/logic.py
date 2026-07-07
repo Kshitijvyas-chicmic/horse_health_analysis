@@ -73,16 +73,16 @@ class HPAPredictor:
         self.model = init_model(cfg, checkpoint_path, device=device)
         self.MODEL_RATIO = 0.50
         
-    def predict(self, img_bytes, remove_bg=True):
+    def predict(self, img_bytes, remove_bg=True, orig_img_bytes=None):
         # Prevent empty or None buffers
         if not img_bytes:
-            raise ValueError("Empty image buffer provided")
+            return {"success": False, "error": "Empty image buffer provided. Please try uploading the image again."}
             
         # Convert bytes to cv2 image
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
-            raise ValueError("Could not decode image")
+            return {"success": False, "error": "Could not decode image. Please ensure the file is a valid image."}
             
         img_h, img_w = img.shape[:2]
         
@@ -151,8 +151,21 @@ class HPAPredictor:
         
         keypoints = best_res.pred_instances.keypoints[0]
         scores = best_res.pred_instances.keypoint_scores[0]
-        
-        vis = img.copy()
+
+        # If an original image is provided, draw on it (stencil mode).
+        # Inference was done on the processed/background-removed image,
+        # but the annotated output will use the original as the canvas.
+        if orig_img_bytes:
+            orig_nparr = np.frombuffer(orig_img_bytes, np.uint8)
+            orig_img = cv2.imdecode(orig_nparr, cv2.IMREAD_COLOR)
+            if orig_img is not None and orig_img.shape[:2] == img.shape[:2]:
+                vis = orig_img
+            else:
+                logger.warning("⚠️ Original image size mismatch or decode failed — falling back to processed image canvas.")
+                vis = img.copy()
+        else:
+            vis = img.copy()
+
         colors = [(0,0,255),(0,165,255),(0,255,0),(255,0,0)]
         for i,(x,y) in enumerate(keypoints):
             cv2.circle(vis,(int(x),int(y)),6,colors[i],-1)

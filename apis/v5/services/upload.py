@@ -5,9 +5,14 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from dotenv import load_dotenv
 
-def upload_image_to_s3(image_bytes: bytes, file_extension: str = "png") -> str:
+def upload_image_to_s3(image_bytes: bytes, file_extension: str = "png", folder: str = "symmetry_overlays") -> str:
     """
-    Uploads an image in bytes to S3 and returns the public URL.
+    Uploads an image in bytes to S3 and returns the relative path (S3 key).
+    
+    Args:
+        image_bytes:    Raw image bytes to upload.
+        file_extension: File extension without dot (e.g. 'jpg', 'png').
+        folder:         S3 folder/prefix to upload into.
     """
     load_dotenv()
     bucket_name = os.getenv("S3_BUCKET_NAME")
@@ -28,7 +33,7 @@ def upload_image_to_s3(image_bytes: bytes, file_extension: str = "png") -> str:
             region_name=region_name
         )
         
-        file_name = f"symmetry_overlays/symmetry_{uuid.uuid4().hex}.{file_extension}"
+        file_name = f"{folder}/{folder.split('_')[0]}_{uuid.uuid4().hex}.{file_extension}"
         
         s3_client.upload_fileobj(
             io.BytesIO(image_bytes),
