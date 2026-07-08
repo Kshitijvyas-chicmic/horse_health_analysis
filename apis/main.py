@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
@@ -19,12 +19,16 @@ from apis.v2.routes import router as analyze_v2_router
 # from apis.v3.routes import router as analyze_v3_router  # V3 hidden — shifted to V4
 from apis.v4.routes import router as analyze_v4_router
 
-# Setup Logging
+# Setup Logging — writes to stdout AND to a file so logs persist on the server.
+LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api.log")
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),  # persist logs to disk
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -108,12 +112,28 @@ async def status():
     """Returns the initialization status of the models."""
     return {
         "mmpose": "loaded" if getattr(app.state, "predictor", None) else "failed",
-        # "yolo": "loaded" if getattr(app.state, "yolo_predictor", None) else "failed",
         "paths": {
             "root": PROJECT_ROOT,
-            # "yolo_exists": os.path.exists(YOLO_WEIGHTS)
         }
     }
+
+@app.get("/api/logs", tags=["Health"], response_class=PlainTextResponse)
+async def get_logs(lines: int = 100):
+    """
+    Returns the last N lines of the server log file as plain text.
+    Usage: /api/logs?lines=200
+    Open directly in browser or curl — no JSON parsing needed.
+    """
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        last_lines = all_lines[-lines:]
+        header = f"=== Last {len(last_lines)} lines of {LOG_FILE} ===\n\n"
+        return PlainTextResponse(header + "".join(last_lines))
+    except FileNotFoundError:
+        return PlainTextResponse("Log file not found yet. No requests have been made since server start.")
+    except Exception as e:
+        return PlainTextResponse(f"Error reading log file: {e}")
 
 @app.get("/", tags=["Health"])
 @app.get("/ping", tags=["Health"])

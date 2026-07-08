@@ -72,6 +72,16 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     if not predictor:
         raise HTTPException(status_code=503, detail="MMPose model not initialized")
 
+    # --- Log incoming request body summary ---
+    def _has(val): return "✅" if val else "❌"
+    logging.info(
+        f"📥 [v5] Incoming request body:\n"
+        f"  Lateral (original)  : frontLeft={_has(request.frontLeftLateral)}  frontRight={_has(request.frontRightLateral)}  backLeft={_has(request.backLeftLateral)}  backRight={_has(request.backRightLateral)}\n"
+        f"  Lateral (processed) : frontLeft={_has(request.frontLeftLateralProcessed)}  frontRight={_has(request.frontRightLateralProcessed)}  backLeft={_has(request.backLeftLateralProcessed)}  backRight={_has(request.backRightLateralProcessed)}\n"
+        f"  Frontal (original)  : frontLeft={_has(request.frontLeftFrontal)}  frontRight={_has(request.frontRightFrontal)}  backLeft={_has(request.backLeftFrontal)}  backRight={_has(request.backRightFrontal)}\n"
+        f"  Frontal (processed) : frontLeft={_has(request.frontLeftFrontalProcessed)}  frontRight={_has(request.frontRightFrontalProcessed)}  backLeft={_has(request.backLeftFrontalProcessed)}  backRight={_has(request.backRightFrontalProcessed)}"
+    )
+
     # --- Map lateral pairs: original + processed (bg-removed) ---
     # If only one is provided, the image is treated as the processed one (backward-compat).
     lateral_pairs = {
@@ -115,9 +125,17 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     frontal_keys = []
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
         if img_orig and img_proc:
+            # Both provided (ideal case)
             frontal_keys.append(leg_key)
             fetch_tasks.append(get_image_bytes(img_orig))
             fetch_tasks.append(get_image_bytes(img_proc))
+        elif img_orig or img_proc:
+            # Only one provided — use the same image for both slots.
+            # process_frontal_leg_symmetry can still run geometry analysis.
+            single = img_orig or img_proc
+            frontal_keys.append(leg_key)
+            fetch_tasks.append(get_image_bytes(single))
+            fetch_tasks.append(get_image_bytes(single))
 
     logging.info(f"📡 [v5] Downloading {len(fetch_tasks)} images...")
     downloaded = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -161,9 +179,20 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
                 img_orig_bytes, img_proc_bytes = img_data
                 mp, url = process_lateral_leg_overlay(predictor, img_orig_bytes, img_proc_bytes)
             else:
-                # Legacy / single-image mode
+                # Single-image mode: run inference, then upload the annotated image from image_base64.
+                # image_base64 is always populated by HPAPredictor.predict(), so we can always
+                # get an output image even without a separate original image.
+                from apis.v5.services.upload import upload_image_to_s3
+                import base64 as _b64
                 mp = run_leg_inference(predictor, img_data)
-                url = None
+                url = ""
+                output_b64 = mp.get("image_base64")
+                if output_b64:
+                    try:
+                        analyzed_bytes = _b64.b64decode(output_b64)
+                        url = upload_image_to_s3(analyzed_bytes, file_extension="jpg", folder="lateral_overlays") or ""
+                    except Exception as upload_err:
+                        logging.error(f"❌ [v5] {leg_key}: S3 upload failed in single-image mode: {upload_err}")
         except Exception as e:
             logging.error(f"❌ [v5] Lateral inference failed for {leg_key}: {e}")
             mp = {"success": False, "error": "We couldn't analyze this image. Please ensure the photo is clear and taken from the correct angle."}
@@ -200,7 +229,9 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             for suffix in ("ScanScore", "Quality", "HoofAngle", "PasternAngle", "AngleDeviation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = 0.0
             mmpose_fields[f"{leg_key}Notes"] = payload if isinstance(payload, str) else None
-            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else "Pass"
+            # QualityCheck for frontal is null on success (no angle scoring is done for frontal,
+            # so 'Pass' with Score:0 is semantically wrong). Only set 'Fail' when an error occurred.
+            mmpose_fields[f"{leg_key}QualityCheck"] = "Fail" if payload else None
             for suffix in ("Condition", "Recommendation"):
                 mmpose_fields[f"{leg_key}{suffix}"] = None
             logging.info(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={url}")
@@ -211,6 +242,11 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
             # Store the lateral annotated image URL if one was returned
             if url:
                 mmpose_fields[f"{leg_key}ImageUrl"] = url
+            else:
+                # Log explicitly when inference succeeded but no overlay image was produced.
+                # This catches silent S3 upload failures or missing image_base64 from predict().
+                if mp_pred.get("success"):
+                    logging.warning(f"⚠️ [v5] {leg_key}: Inference succeeded (score computed) but ImageUrl is empty — S3 upload may have failed.")
 
             if mp_score is not None and leg_key in _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE:
                 mmpose_scores.append(mp_score)
