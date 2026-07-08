@@ -381,8 +381,13 @@ def select_front_leg_fallback(mask: np.ndarray,
     if not candidates:
         return None
 
-    candidates.sort(key=lambda c: (c['avg_depth'], c['area']), reverse=True)
-    best = candidates[0]
+    # FIX #15: Don't let a tiny foreground blob beat the massive main leg.
+    # Only consider candidates that have at least 15% of the area of the largest candidate.
+    max_area = max(c['area'] for c in candidates)
+    valid_candidates = [c for c in candidates if c['area'] >= max_area * 0.15]
+
+    valid_candidates.sort(key=lambda c: (c['avg_depth'], c['area']), reverse=True)
+    best = valid_candidates[0]
     logging.info("Selected front leg (area=%.0f depth=%.3f)", best['area'], best['avg_depth'])
     return best['mask']
 
