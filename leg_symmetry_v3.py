@@ -201,8 +201,37 @@ def depth_prefilter_mask(mask: np.ndarray,
     ys_orig = np.where(np.any(mask > 0, axis=1))[0]
     orig_height = int(ys_orig[-1] - ys_orig[0]) if ys_orig.size >= 2 else 0
 
-    farthest_depth = float(fg_depths.min())
-    thresh = farthest_depth + depth_delta
+    # Compute Otsu's threshold on the foreground pixels to find the jump
+    depth_norm = (depth_map - fg_depths.min()) / (max(1e-5, fg_depths.max() - fg_depths.min()))
+    depth_8u = (depth_norm * 255).astype(np.uint8)
+    fg_pixels = depth_8u[mask > 0]
+    
+    thresh_val, _ = cv2.threshold(fg_pixels, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Calculate the density of pixels in the "valley" around the threshold
+    valley_mask = (fg_pixels >= thresh_val - 5) & (fg_pixels <= thresh_val + 5)
+    valley_density = np.sum(valley_mask) / fg_pixels.size
+    
+    logging.info("depth_prefilter_mask: Otsu valley density = %.4f", valley_density)
+    
+    # If the density is high (>= 0.10), the histogram is unimodal (single continuous leg).
+    # We must bypass the Otsu depth filter completely so we don't shave the sides of the cylinder.
+    if valley_density >= 0.10:
+        logging.info("depth_prefilter_mask: unimodal depth distribution detected (single leg). Skipping Otsu filter.")
+        # But wait! There might be small pieces of background artifact left by the frontend background removal!
+        # We can safely prune extreme low-depth outliers (e.g., relative depth < 0.3).
+        hard_thresh = fg_depths.min() + 0.3 * (fg_depths.max() - fg_depths.min())
+        filtered = np.zeros_like(mask)
+        filtered[(mask > 0) & (depth_map >= hard_thresh)] = 255
+        
+        # Close small gaps
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
+        return filtered
+    
+    # Scale Otsu threshold back to the original depth map scale
+    thresh = (thresh_val / 255.0) * (fg_depths.max() - fg_depths.min()) + fg_depths.min()
+    
     filtered = np.zeros_like(mask)
     filtered[(mask > 0) & (depth_map >= thresh)] = 255
 
@@ -222,7 +251,7 @@ def depth_prefilter_mask(mask: np.ndarray,
         ys_filt = np.where(np.any(filtered > 0, axis=1))[0]
         if ys_filt.size >= 2:
             filt_height = int(ys_filt[-1] - ys_filt[0])
-            if filt_height < orig_height * 0.65:
+            if filt_height < orig_height * 0.90:
                 logging.warning(
                     "depth_prefilter_mask: height shrank to %.0f%% (orig=%d filt=%d) "
                     "— top of leg cut off; returning original mask.",
@@ -624,9 +653,12 @@ def find_cannon_bone_axis(leg_mask: np.ndarray,
     for ry in range(top_y, bottom_y + 1):
         xs = np.where(clean[ry] > 0)[0]
         if xs.size >= 2:
-            rows.append((ry, int(xs[0]), int(xs[-1]),
-                         (float(xs[0]) + float(xs[-1])) / 2.0,
-                         int(xs[-1] - xs[0])))
+            # FIX #15: Extract the longest continuous segment on this row
+            segs = np.split(xs, np.where(np.diff(xs) != 1)[0] + 1)
+            longest = max(segs, key=len)
+            lx, rx = int(longest[0]), int(longest[-1])
+            if rx > lx:
+                rows.append((ry, lx, rx, (float(lx) + float(rx)) / 2.0, rx - lx))
 
     if not rows:
         return (w // 2, top_y), (w // 2, bottom_y)
@@ -696,7 +728,10 @@ def analyze_symmetry(leg_mask: np.ndarray,
         if xs.size < 2:
             row_data.append(None)
             continue
-        lx, rx = int(xs[0]), int(xs[-1])
+        # FIX #15: extract longest segment to ignore background blobs
+        segs = np.split(xs, np.where(np.diff(xs) != 1)[0] + 1)
+        longest = max(segs, key=len)
+        lx, rx = int(longest[0]), int(longest[-1])
         cx = cx_at(ry)
         if lx >= cx or rx <= cx:
             row_data.append(None)

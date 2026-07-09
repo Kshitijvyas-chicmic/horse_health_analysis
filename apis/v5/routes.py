@@ -281,10 +281,46 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
     del downloaded
     gc.collect()
 
-    return AdvancedScanResponseV5(
+    # HARDCODED FOR TESTING — remove once Node confirms it receives backLeftFrontalImageUrl
+    mmpose_fields["backLeftFrontalImageUrl"] = "symmetry_overlays/symmetry_29cfbc3aaa6c4868bd6d09f3f0c1e83b.jpg"
+
+    response = AdvancedScanResponseV5(
         mmpose=ModelResultV5(**mmpose_fields),
         yolo=None,
         scanScore=aggregation["scanScore"],
         notes=aggregation["notes"],
         quality=1,
     )
+
+    # --- Log response body summary ---
+    mmpose_out = response.mmpose
+    lateral_legs = ["frontLeft", "frontRight", "backLeft", "backRight"]
+    frontal_legs = ["frontLeftFrontal", "frontRightFrontal", "backLeftFrontal", "backRightFrontal"]
+    lateral_summary = "  ".join(
+        f"{k}=Score:{getattr(mmpose_out, k + 'ScanScore', 0.0)} P:{getattr(mmpose_out, k + 'PasternAngle', 0.0)}° H:{getattr(mmpose_out, k + 'HoofAngle', 0.0)}°"
+        for k in lateral_legs
+    )
+    
+    # Log actual image keys/URLs returned in the response
+    returned_lateral_urls = {
+        k: getattr(mmpose_out, k + "ImageUrl", None)
+        for k in lateral_legs
+        if getattr(mmpose_out, k + "ImageUrl", None)
+    }
+    returned_frontal_urls = {
+        k: getattr(mmpose_out, k + "ImageUrl", None)
+        for k in frontal_legs
+        if getattr(mmpose_out, k + "ImageUrl", None)
+    }
+
+    logging.info(
+        f"📤 [v5] Response body summary:\n"
+        f"  scanScore     : {response.scanScore}\n"
+        f"  notes         : {response.notes}\n"
+        f"  quality       : {response.quality}\n"
+        f"  Lateral scores: {lateral_summary}\n"
+        f"  Lateral URLs  : {returned_lateral_urls}\n"
+        f"  Frontal URLs  : {returned_frontal_urls}"
+    )
+
+    return response
