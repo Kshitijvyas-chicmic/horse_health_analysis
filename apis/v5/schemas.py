@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, AliasChoices
 from typing import Optional
 from apis.v3.schemas import AdvancedScanResponse, ModelResult
 
@@ -49,3 +49,37 @@ class AdvancedScanRequest(BaseModel):
     frontRightFrontalProcessed: Optional[str] = None
     backLeftFrontalProcessed: Optional[str] = None
     backRightFrontalProcessed: Optional[str] = None
+
+
+class AsyncScanRequest(AdvancedScanRequest):
+    """
+    V5 Async extension of AdvancedScanRequest.
+    Accepts 'scanId' or 'scan_id' from clients. Internally always uses scanId.
+    """
+    scanId: str = Field(..., validation_alias=AliasChoices("scanId", "scan_id"))
+
+
+class AsyncJobResponse(BaseModel):
+    """
+    Response for async scan requests.
+    """
+    job_id: str
+    scanId: str
+    status: str
+    message: str
+
+
+class WebhookPayload(BaseModel):
+    """
+    Final summary webhook payload.
+    Identical to AdvancedScanResponseV5 but includes scanId.
+    """
+    scanId: str
+    scanScore: Optional[float] = None
+    notes: Optional[str] = None
+    quality: Optional[float] = None
+    mmpose: Optional[ModelResultV5] = None
+    yolo: Optional[ModelResultV5] = None
+    error: Optional[str] = None
+
+

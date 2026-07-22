@@ -65,21 +65,15 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
     return payload, score
 
 
-@router.post("/analyze", response_model=AdvancedScanResponseV5)
-async def analyze_v5(request: AdvancedScanRequest, req: Request):
-    predictor = req.app.state.predictor
-
+async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> AdvancedScanResponseV5:
     if not predictor:
-        raise HTTPException(status_code=503, detail="MMPose model not initialized")
+        raise ValueError("MMPose model not initialized")
 
-    # --- Log incoming request body summary ---
-    def _has(val): return "✅" if val else "❌"
+    # --- Log all fields received in request ---
+    req_fields = request.model_dump()
     logging.info(
-        f"📥 [v5] Incoming request body:\n"
-        f"  Lateral (original)  : frontLeft={_has(request.frontLeftLateral)}  frontRight={_has(request.frontRightLateral)}  backLeft={_has(request.backLeftLateral)}  backRight={_has(request.backRightLateral)}\n"
-        f"  Lateral (processed) : frontLeft={_has(request.frontLeftLateralProcessed)}  frontRight={_has(request.frontRightLateralProcessed)}  backLeft={_has(request.backLeftLateralProcessed)}  backRight={_has(request.backRightLateralProcessed)}\n"
-        f"  Frontal (original)  : frontLeft={_has(request.frontLeftFrontal)}  frontRight={_has(request.frontRightFrontal)}  backLeft={_has(request.backLeftFrontal)}  backRight={_has(request.backRightFrontal)}\n"
-        f"  Frontal (processed) : frontLeft={_has(request.frontLeftFrontalProcessed)}  frontRight={_has(request.frontRightFrontalProcessed)}  backLeft={_has(request.backLeftFrontalProcessed)}  backRight={_has(request.backRightFrontalProcessed)}"
+        f"📥 [v5] Processing scan request with fields:\n" +
+        "\n".join(f"  • {k}: {v}" for k, v in req_fields.items())
     )
 
     # --- Map lateral pairs: original + processed (bg-removed) ---
@@ -288,3 +282,54 @@ async def analyze_v5(request: AdvancedScanRequest, req: Request):
         notes=aggregation["notes"],
         quality=1,
     )
+
+
+@router.post("/analyze", response_model=AdvancedScanResponseV5)
+async def analyze_v5(request: AdvancedScanRequest, req: Request):
+    """Synchronous endpoint (Legacy behavior)."""
+    predictor = req.app.state.predictor
+    if not predictor:
+        raise HTTPException(status_code=503, detail="MMPose model not initialized")
+    try:
+        return await run_full_scan_logic(request, predictor)
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logging.error(f"❌ [v5] Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+from apis.v5.schemas import AsyncScanRequest, AsyncJobResponse
+import uuid
+
+@router.post("/analyze-async", response_model=AsyncJobResponse, status_code=202)
+async def analyze_async_v5(request: AsyncScanRequest, req: Request):
+    """
+    Asynchronous endpoint. Immediately returns a job_id (202 Accepted) 
+    and processes the full scan in the background. 
+    A webhook is fired with the final result.
+    """
+    predictor = req.app.state.predictor
+    if not predictor:
+        raise HTTPException(status_code=503, detail="MMPose model not initialized")
+
+    job_id = str(uuid.uuid4())
+
+    # --- Log all fields received in request ---
+    req_fields = request.model_dump()
+    logging.info(
+        f"📥 [v5] Received /analyze-async request (Job: {job_id}, scanId: '{request.scanId}'):\n" +
+        "\n".join(f"  • {k}: {v}" for k, v in req_fields.items())
+    )
+
+    # Push to queue (implemented in queue_worker.py)
+    from apis.v5.services.queue_worker import enqueue_scan_job
+    await enqueue_scan_job(request, predictor, job_id)
+
+    return AsyncJobResponse(
+        job_id=job_id,
+        scanId=request.scanId,
+        status="queued",
+        message="Scan is queued. A webhook will be sent upon completion."
+    )
+
