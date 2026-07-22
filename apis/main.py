@@ -61,10 +61,15 @@ async def lifespan(app: FastAPI):
     # 2. YOLO Medium (Disabled for speed/stability)
     app.state.yolo_predictor = None
     
+    # 3. Start Async Queue Worker for webhooks
+    from apis.v5.services.queue_worker import start_queue_worker, stop_queue_worker
+    start_queue_worker()
+    
     yield
     
     # --- Shutdown Logic ---
     logger.info("🛑 Shutting down API...")
+    await stop_queue_worker()
     if hasattr(app.state, 'predictor'):
         del app.state.predictor
 
