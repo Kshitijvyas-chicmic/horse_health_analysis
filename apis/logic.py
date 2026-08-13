@@ -143,6 +143,9 @@ class HPAPredictor:
                     if not is_sane:
                         agg -= 8  # Heavy penalty for anatomically impossible poses
                         
+                    # Penalize off-center crops to prevent selecting tails or secondary legs on the edges
+                    agg -= abs(x_off) * 15  # -2.25 penalty for 0.15 offset
+                        
                     if agg > best_score or best_res is None:
                         best_score = agg
                         best_res = res

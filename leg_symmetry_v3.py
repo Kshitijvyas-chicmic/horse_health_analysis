@@ -253,6 +253,119 @@ def trim_upper_leg_fraction(leg_mask: np.ndarray, exclude_top_frac: float = 0.05
     return trimmed
 
 
+def clip_tail_from_leg_mask(leg_mask: np.ndarray,
+                            corridor_factor: float = 1.4,
+                            upper_threshold: float = 1.1,
+                            lower_threshold: float = 1.3) -> np.ndarray:
+    """Remove tail pixels from an isolated leg mask using two passes.
+
+    Pass 1 — Hoof Corridor:
+        Looks at the bottom 20% of the mask bounding box to locate the hoof.
+        Computes the hoof centre-X (median of hoof pixels) and clips all
+        pixels outside [hoof_cx +/- corridor_factor * hoof_width / 2].
+
+    Pass 2 — Region-Aware Row Comparison:
+        Scans every row from bottom to top.  For each row, if one side is
+        wider than the other by more than the threshold, the excess is trimmed.
+
+        Two thresholds are used depending on position in the leg:
+          - Upper 60% (top of leg): upper_threshold = 1.1  (strict)
+            The tail ALWAYS hangs from above, so contamination is worst
+            in the upper portion.  An aggressive trim here is safe.
+          - Lower 40% (hoof/fetlock): lower_threshold = 1.3  (lenient)
+            Hoof and fetlock may have natural anatomical asymmetry that
+            we need to preserve for the symmetry score.
+
+    A safety guard returns the original mask if > 70% of pixels would be lost.
+    """
+    h, w = leg_mask.shape
+    result = leg_mask.copy()
+
+    # Bounding box of the leg mask
+    ys_all = np.where(np.any(leg_mask > 0, axis=1))[0]
+    if ys_all.size == 0:
+        return leg_mask
+    top_y, bottom_y = int(ys_all[0]), int(ys_all[-1])
+    leg_height = bottom_y - top_y + 1
+
+    # --- Pass 1: Hoof Corridor ---
+    hoof_start_y = bottom_y - max(1, int(leg_height * 0.20))
+    hoof_region  = leg_mask[hoof_start_y: bottom_y + 1, :]
+
+    hoof_xs = np.where(hoof_region > 0)[1]
+    if hoof_xs.size == 0:
+        return leg_mask
+
+    hoof_cx = int(np.median(hoof_xs))
+
+    max_hoof_width = 0
+    for ry in range(hoof_region.shape[0]):
+        row_xs = np.where(hoof_region[ry] > 0)[0]
+        if row_xs.size >= 2:
+            max_hoof_width = max(max_hoof_width, int(row_xs[-1] - row_xs[0]))
+
+    if max_hoof_width < 5:
+        return leg_mask
+
+    half_corridor  = int(max_hoof_width * corridor_factor / 2)
+    corridor_left  = max(0, hoof_cx - half_corridor)
+    corridor_right = min(w - 1, hoof_cx + half_corridor)
+
+    result[:, :corridor_left]      = 0
+    result[:, corridor_right + 1:] = 0
+
+    logging.info(
+        "clip_tail [pass1]: hoof_cx=%d hoof_w=%d corridor=[%d,%d]",
+        hoof_cx, max_hoof_width, corridor_left, corridor_right
+    )
+
+    # --- Pass 2: Region-Aware Row Comparison ---
+    # Boundary between upper (strict) and lower (lenient) regions
+    region_split_y = top_y + int(leg_height * 0.60)
+    trimmed_rows = 0
+
+    for ry in range(bottom_y, top_y - 1, -1):
+        row_xs = np.where(result[ry] > 0)[0]
+        if row_xs.size < 2:
+            continue
+        lx, rx = int(row_xs[0]), int(row_xs[-1])
+        lw = hoof_cx - lx   # pixels left of hoof centre
+        rw = rx - hoof_cx   # pixels right of hoof centre
+        if lw <= 0 or rw <= 0:
+            continue
+
+        # Pick threshold based on region: strict for upper tail zone, lenient for lower leg
+        thresh = upper_threshold if ry < region_split_y else lower_threshold
+
+        changed = False
+        if lw > rw * thresh:
+            new_lx = hoof_cx - int(rw * thresh)
+            result[ry, max(0, lx): max(0, new_lx)] = 0
+            changed = True
+        elif rw > lw * thresh:
+            new_rx = hoof_cx + int(lw * thresh)
+            result[ry, min(w, new_rx + 1): min(w, rx + 1)] = 0
+            changed = True
+        if changed:
+            trimmed_rows += 1
+
+    # Safety guard: if too many pixels removed, return original mask
+    remaining = cv2.countNonZero(result)
+    original  = cv2.countNonZero(leg_mask)
+    if original > 0 and remaining < original * 0.30:
+        logging.warning(
+            "clip_tail: removed %.0f%% — returning original mask.",
+            100.0 * (1.0 - remaining / original)
+        )
+        return leg_mask
+
+    logging.info(
+        "clip_tail [pass2]: kept %.0f%% (trimmed %d rows, split_y=%d).",
+        100.0 * remaining / max(original, 1), trimmed_rows, region_split_y
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # FIX #3 — tail rejection helper
 # ---------------------------------------------------------------------------
@@ -386,7 +499,12 @@ def select_front_leg_fallback(mask: np.ndarray,
     max_area = max(c['area'] for c in candidates)
     valid_candidates = [c for c in candidates if c['area'] >= max_area * 0.15]
 
-    valid_candidates.sort(key=lambda c: (c['avg_depth'], c['area']), reverse=True)
+    # Soft center-bias: same 0.25 weight as AI path — penalizes edge candidates
+    # without overriding a clearly dominant centered leg.
+    valid_candidates.sort(
+        key=lambda c: c['avg_depth'] - (c['dx'] / max(w, 1)) * 0.25,
+        reverse=True
+    )
     best = valid_candidates[0]
     logging.info("Selected front leg (area=%.0f depth=%.3f)", best['area'], best['avg_depth'])
     return best['mask']
@@ -586,9 +704,10 @@ def get_ai_leg_keypoints(inferencer,
         if len(kpts) > 10:
             def sc(i):
                 return float(scores[i]) if scores and len(scores) > i else 1.0
-            if sc(6) > 0.12 and sc(7) > 0.12:
+            # Threshold raised 0.12 → 0.40 to avoid hallucinating legs on tails
+            if sc(6) > 0.40 and sc(7) > 0.40:
                 legs.append((tuple(kpts[6][:2]), tuple(kpts[7][:2])))
-            if sc(9) > 0.12 and sc(10) > 0.12:
+            if sc(9) > 0.40 and sc(10) > 0.40:
                 legs.append((tuple(kpts[9][:2]), tuple(kpts[10][:2])))
     except Exception:
         return []
@@ -829,7 +948,8 @@ def process_image(original_path: str, processed_path: str,
         except Exception:
             legs = []
         if legs:
-            best_leg, best_depth_val = None, -1.0
+            best_leg, best_score = None, -999.0
+            img_cx = w / 2.0
             for knee, hoof in legs:
                 line_mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.line(line_mask,
@@ -837,10 +957,17 @@ def process_image(original_path: str, processed_path: str,
                          (int(hoof[0]), int(hoof[1])), 255, thickness=5)
                 overlap = (line_mask > 0) & (mask > 0)
                 avg_d = float(depth_map[overlap].mean()) if np.any(overlap) else 0.0
-                logging.info("Leg candidate knee=(%.1f,%.1f) hoof=(%.1f,%.1f) depth=%.3f",
-                             *knee, *hoof, avg_d)
-                if avg_d > best_depth_val:
-                    best_depth_val, best_leg = avg_d, (knee, hoof)
+                # Soft center-bias: penalize candidates far from image center.
+                # Weight 0.25 means a leg 40% off-center loses 0.10 depth units — significant
+                # but not enough to override a clearly dominant centered leg.
+                x_offset_norm = abs(knee[0] - img_cx) / max(w, 1)
+                score = avg_d - x_offset_norm * 0.25
+                logging.info(
+                    "Leg candidate knee=(%.1f,%.1f) hoof=(%.1f,%.1f) depth=%.3f x_off=%.2f score=%.3f",
+                    *knee, *hoof, avg_d, x_offset_norm, score
+                )
+                if score > best_score:
+                    best_score, best_leg = score, (knee, hoof)
 
             if best_leg is not None:
                 knee, hoof = best_leg
@@ -872,6 +999,9 @@ def process_image(original_path: str, processed_path: str,
     per_leg_draw: list[dict] = []
 
     for info in leg_infos:
+        # ── Tail removal before axis-finding and symmetry analysis ──
+        info['mask'] = clip_tail_from_leg_mask(info['mask'])
+
         pt_top, pt_bottom = find_cannon_bone_axis(
             info['mask'],
             target_knee=info.get('knee'),

@@ -162,8 +162,8 @@ class YOLOPredictor:
             metrics["error"] = "Could not detect both pastern and hoof. Poor image quality or incorrect angle. Please retake the image."
             return metrics
 
-        # ── Selection: largest-area mask wins ──
-        pastern_mask, p_conf = max(pastern_candidates, key=lambda x: np.sum(x[0]))
+        # ── Selection: highest confidence mask wins (avoids selecting tails/merged legs) ──
+        pastern_mask, p_conf = max(pastern_candidates, key=lambda x: (x[1], np.sum(x[0])))
         p_ys, p_xs = np.where(pastern_mask == 1)
         p_bottom   = np.max(p_ys)
         p_center_x = np.mean(p_xs)

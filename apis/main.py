@@ -19,11 +19,20 @@ from apis.v2.routes import router as analyze_v2_router
 # from apis.v3.routes import router as analyze_v3_router  # V3 hidden — shifted to V4
 from apis.v4.routes import router as analyze_v4_router
 
+from datetime import datetime, timezone, timedelta
+
+# Configure logger to output IST (UTC+5:30) timestamps
+IST = timezone(timedelta(hours=5, minutes=30))
+def ist_time(*args):
+    return datetime.now(IST).timetuple()
+
+logging.Formatter.converter = ist_time
+
 # Setup Logging — writes to stdout AND to a file so logs persist on the server.
 LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api.log")
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)s] %(message)s",
+    format="[%(asctime)s IST] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
