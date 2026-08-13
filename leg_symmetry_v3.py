@@ -108,7 +108,7 @@ def extract_mask_from_processed(processed_path: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def split_mask_on_width(mask_region: np.ndarray,
-                        min_narrow_frac: float = 0.6,
+                        min_narrow_frac: float = 0.35,  # Relaxed from 0.60 to prevent chopping legs
                         min_width_px: int = 30,
                         debug: bool = False) -> list[np.ndarray]:
     """Split a mask at narrow 'waist' rows; return component masks sorted by area desc."""
@@ -235,8 +235,9 @@ def depth_prefilter_mask(mask: np.ndarray,
     filtered = np.zeros_like(mask)
     filtered[(mask > 0) & (depth_map >= thresh)] = 255
 
-    # Close small gaps so the kept region stays contiguous
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    # Close small gaps vertically so the kept region stays contiguous,
+    # but use a narrow kernel (3, 15) to avoid bridging horizontal gaps between two legs.
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 15))
     filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
 
     # Safety guard 1: pixel count (original)
@@ -334,6 +335,11 @@ def clip_tail_from_leg_mask(leg_mask: np.ndarray,
             max_hoof_width = max(max_hoof_width, int(row_xs[-1] - row_xs[0]))
 
     if max_hoof_width < 5:
+        return leg_mask
+
+    # SAFETY BYPASS: If hoof is >60% of image width, it's likely multiple merged legs.
+    if max_hoof_width > w * 0.60:
+        logging.info("clip_tail: skipped (hoof width %.0f%% of image - likely multiple legs).", 100.0 * max_hoof_width / w)
         return leg_mask
 
     half_corridor  = int(max_hoof_width * corridor_factor / 2)
@@ -460,23 +466,52 @@ def select_front_leg_fallback(mask: np.ndarray,
             cv2.drawContours(combined, [cnt], -1, 255, cv2.FILLED)
 
     parts = split_mask_on_width(combined,
-                                min_narrow_frac=0.55,
+                                min_narrow_frac=0.35,
                                 min_width_px=max(20, int(0.05 * w)),
                                 debug=debug)
 
     if len(parts) == 1 and cv2.countNonZero(parts[0]) > (h * w * 0.03):
+        # 1. Try existing hoof watershed if multiple raw contours exist
         hooves = []
         for cnt in raw_contours:
             if cv2.contourArea(cnt) < 500:
                 continue
             bx, by, bw, bh = cv2.boundingRect(cnt)
             hooves.append((float(bx + bw // 2), float(min(by + bh + 20, h - 1))))
+        
         if len(hooves) >= 2:
             ws_parts = seed_watershed_from_hooves(combined, hooves)
             ws_parts = [p for p in ws_parts if p is not None and cv2.countNonZero(p) > 50]
             if len(ws_parts) > len(parts):
                 logging.info("Watershed separated %d parts from touching-leg blob", len(ws_parts))
                 parts = ws_parts
+        else:
+            # 2. If only 1 contour exists but it's very wide, it's likely merged legs.
+            # Use horizontal erosion to break the weak lateral connection.
+            part = parts[0]
+            ys, xs = np.where(part > 0)
+            if xs.size > 0:
+                part_w = xs.max() - xs.min()
+                if part_w > w * 0.40:
+                    logging.info("Blob is very wide (w=%.0f%% of image). Splitting vertically down the middle...", 100.0 * part_w / w)
+                    x_min, x_max = xs.min(), xs.max()
+                    mid_x = (x_min + x_max) // 2
+                    
+                    left_part = np.zeros_like(part)
+                    left_part[:, :mid_x] = part[:, :mid_x]
+                    
+                    right_part = np.zeros_like(part)
+                    right_part[:, mid_x:] = part[:, mid_x:]
+                    
+                    new_parts = []
+                    if cv2.countNonZero(left_part) > 500:
+                        new_parts.append(left_part)
+                    if cv2.countNonZero(right_part) > 500:
+                        new_parts.append(right_part)
+                    
+                    if len(new_parts) > 1:
+                        logging.info("Successfully split the wide blob into 2 parts.")
+                        parts = new_parts
 
     img_cx = w / 2.0
     candidates = []
@@ -588,7 +623,7 @@ def select_front_leg_from_keypoints(mask: np.ndarray,
 
     if cv2.countNonZero(lm) > (mask.shape[0] * mask.shape[1] * 0.02):
         parts = split_mask_on_width(lm,
-                                    min_narrow_frac=0.6,
+                                    min_narrow_frac=0.35,
                                     min_width_px=max(20, int(0.06 * mask.shape[1])),
                                     debug=debug)
         if len(parts) > 1:
