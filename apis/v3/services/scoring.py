@@ -16,7 +16,7 @@ def calculate_leg_score(pastern_angle: float, hoof_angle: float) -> float:
     score = 10.0
     
     if diff >= 0:
-        penalty_steps = diff / 1.0
+        penalty_steps = diff / 1.5
     else:
         penalty_steps = abs(diff) / 1.5
         
