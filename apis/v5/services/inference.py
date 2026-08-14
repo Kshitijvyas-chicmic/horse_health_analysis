@@ -28,7 +28,7 @@ def get_frontal_mmpose():
 async def get_image_bytes(image_input: str) -> bytes:
     """Fetches image bytes from either a URL or a Base64 string."""
     if image_input.startswith("http"):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}) as client:
             resp = await client.get(image_input, timeout=10.0)
             resp.raise_for_status()
             return resp.content

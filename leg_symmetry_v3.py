@@ -108,7 +108,7 @@ def extract_mask_from_processed(processed_path: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def split_mask_on_width(mask_region: np.ndarray,
-                        min_narrow_frac: float = 0.35,  # Relaxed from 0.60 to prevent chopping legs
+                        min_narrow_frac: float = 0.6,
                         min_width_px: int = 30,
                         debug: bool = False) -> list[np.ndarray]:
     """Split a mask at narrow 'waist' rows; return component masks sorted by area desc."""
@@ -201,43 +201,13 @@ def depth_prefilter_mask(mask: np.ndarray,
     ys_orig = np.where(np.any(mask > 0, axis=1))[0]
     orig_height = int(ys_orig[-1] - ys_orig[0]) if ys_orig.size >= 2 else 0
 
-    # Compute Otsu's threshold on the foreground pixels to find the jump
-    depth_norm = (depth_map - fg_depths.min()) / (max(1e-5, fg_depths.max() - fg_depths.min()))
-    depth_8u = (depth_norm * 255).astype(np.uint8)
-    fg_pixels = depth_8u[mask > 0]
-    
-    thresh_val, _ = cv2.threshold(fg_pixels, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # Calculate the density of pixels in the "valley" around the threshold
-    valley_mask = (fg_pixels >= thresh_val - 5) & (fg_pixels <= thresh_val + 5)
-    valley_density = np.sum(valley_mask) / fg_pixels.size
-    
-    logging.info("depth_prefilter_mask: Otsu valley density = %.4f", valley_density)
-    
-    # If the density is high (>= 0.10), the histogram is unimodal (single continuous leg).
-    # We must bypass the Otsu depth filter completely so we don't shave the sides of the cylinder.
-    if valley_density >= 0.10:
-        logging.info("depth_prefilter_mask: unimodal depth distribution detected (single leg). Skipping Otsu filter.")
-        # But wait! There might be small pieces of background artifact left by the frontend background removal!
-        # We can safely prune extreme low-depth outliers (e.g., relative depth < 0.3).
-        hard_thresh = fg_depths.min() + 0.3 * (fg_depths.max() - fg_depths.min())
-        filtered = np.zeros_like(mask)
-        filtered[(mask > 0) & (depth_map >= hard_thresh)] = 255
-        
-        # Close small gaps
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-        filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
-        return filtered
-    
-    # Scale Otsu threshold back to the original depth map scale
-    thresh = (thresh_val / 255.0) * (fg_depths.max() - fg_depths.min()) + fg_depths.min()
-    
+    farthest_depth = float(fg_depths.min())
+    thresh = farthest_depth + depth_delta
     filtered = np.zeros_like(mask)
     filtered[(mask > 0) & (depth_map >= thresh)] = 255
 
-    # Close small gaps vertically so the kept region stays contiguous,
-    # but use a narrow kernel (3, 15) to avoid bridging horizontal gaps between two legs.
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 15))
+    # Close small gaps so the kept region stays contiguous
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
     filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
 
     # Safety guard 1: pixel count (original)
@@ -252,7 +222,7 @@ def depth_prefilter_mask(mask: np.ndarray,
         ys_filt = np.where(np.any(filtered > 0, axis=1))[0]
         if ys_filt.size >= 2:
             filt_height = int(ys_filt[-1] - ys_filt[0])
-            if filt_height < orig_height * 0.90:
+            if filt_height < orig_height * 0.65:
                 logging.warning(
                     "depth_prefilter_mask: height shrank to %.0f%% (orig=%d filt=%d) "
                     "— top of leg cut off; returning original mask.",
@@ -281,124 +251,6 @@ def trim_upper_leg_fraction(leg_mask: np.ndarray, exclude_top_frac: float = 0.05
     trimmed = leg_mask.copy()
     trimmed[top_y:cut_y, :] = 0
     return trimmed
-
-
-def clip_tail_from_leg_mask(leg_mask: np.ndarray,
-                            corridor_factor: float = 1.4,
-                            upper_threshold: float = 1.1,
-                            lower_threshold: float = 1.3) -> np.ndarray:
-    """Remove tail pixels from an isolated leg mask using two passes.
-
-    Pass 1 — Hoof Corridor:
-        Looks at the bottom 20% of the mask bounding box to locate the hoof.
-        Computes the hoof centre-X (median of hoof pixels) and clips all
-        pixels outside [hoof_cx +/- corridor_factor * hoof_width / 2].
-
-    Pass 2 — Region-Aware Row Comparison:
-        Scans every row from bottom to top.  For each row, if one side is
-        wider than the other by more than the threshold, the excess is trimmed.
-
-        Two thresholds are used depending on position in the leg:
-          - Upper 60% (top of leg): upper_threshold = 1.1  (strict)
-            The tail ALWAYS hangs from above, so contamination is worst
-            in the upper portion.  An aggressive trim here is safe.
-          - Lower 40% (hoof/fetlock): lower_threshold = 1.3  (lenient)
-            Hoof and fetlock may have natural anatomical asymmetry that
-            we need to preserve for the symmetry score.
-
-    A safety guard returns the original mask if > 70% of pixels would be lost.
-    """
-    h, w = leg_mask.shape
-    result = leg_mask.copy()
-
-    # Bounding box of the leg mask
-    ys_all = np.where(np.any(leg_mask > 0, axis=1))[0]
-    if ys_all.size == 0:
-        return leg_mask
-    top_y, bottom_y = int(ys_all[0]), int(ys_all[-1])
-    leg_height = bottom_y - top_y + 1
-
-    # --- Pass 1: Hoof Corridor ---
-    hoof_start_y = bottom_y - max(1, int(leg_height * 0.20))
-    hoof_region  = leg_mask[hoof_start_y: bottom_y + 1, :]
-
-    hoof_xs = np.where(hoof_region > 0)[1]
-    if hoof_xs.size == 0:
-        return leg_mask
-
-    hoof_cx = int(np.median(hoof_xs))
-
-    max_hoof_width = 0
-    for ry in range(hoof_region.shape[0]):
-        row_xs = np.where(hoof_region[ry] > 0)[0]
-        if row_xs.size >= 2:
-            max_hoof_width = max(max_hoof_width, int(row_xs[-1] - row_xs[0]))
-
-    if max_hoof_width < 5:
-        return leg_mask
-
-    # SAFETY BYPASS: If hoof is >60% of image width, it's likely multiple merged legs.
-    if max_hoof_width > w * 0.60:
-        logging.info("clip_tail: skipped (hoof width %.0f%% of image - likely multiple legs).", 100.0 * max_hoof_width / w)
-        return leg_mask
-
-    half_corridor  = int(max_hoof_width * corridor_factor / 2)
-    corridor_left  = max(0, hoof_cx - half_corridor)
-    corridor_right = min(w - 1, hoof_cx + half_corridor)
-
-    result[:, :corridor_left]      = 0
-    result[:, corridor_right + 1:] = 0
-
-    logging.info(
-        "clip_tail [pass1]: hoof_cx=%d hoof_w=%d corridor=[%d,%d]",
-        hoof_cx, max_hoof_width, corridor_left, corridor_right
-    )
-
-    # --- Pass 2: Region-Aware Row Comparison ---
-    # Boundary between upper (strict) and lower (lenient) regions
-    region_split_y = top_y + int(leg_height * 0.60)
-    trimmed_rows = 0
-
-    for ry in range(bottom_y, top_y - 1, -1):
-        row_xs = np.where(result[ry] > 0)[0]
-        if row_xs.size < 2:
-            continue
-        lx, rx = int(row_xs[0]), int(row_xs[-1])
-        lw = hoof_cx - lx   # pixels left of hoof centre
-        rw = rx - hoof_cx   # pixels right of hoof centre
-        if lw <= 0 or rw <= 0:
-            continue
-
-        # Pick threshold based on region: strict for upper tail zone, lenient for lower leg
-        thresh = upper_threshold if ry < region_split_y else lower_threshold
-
-        changed = False
-        if lw > rw * thresh:
-            new_lx = hoof_cx - int(rw * thresh)
-            result[ry, max(0, lx): max(0, new_lx)] = 0
-            changed = True
-        elif rw > lw * thresh:
-            new_rx = hoof_cx + int(lw * thresh)
-            result[ry, min(w, new_rx + 1): min(w, rx + 1)] = 0
-            changed = True
-        if changed:
-            trimmed_rows += 1
-
-    # Safety guard: if too many pixels removed, return original mask
-    remaining = cv2.countNonZero(result)
-    original  = cv2.countNonZero(leg_mask)
-    if original > 0 and remaining < original * 0.30:
-        logging.warning(
-            "clip_tail: removed %.0f%% — returning original mask.",
-            100.0 * (1.0 - remaining / original)
-        )
-        return leg_mask
-
-    logging.info(
-        "clip_tail [pass2]: kept %.0f%% (trimmed %d rows, split_y=%d).",
-        100.0 * remaining / max(original, 1), trimmed_rows, region_split_y
-    )
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -466,52 +318,23 @@ def select_front_leg_fallback(mask: np.ndarray,
             cv2.drawContours(combined, [cnt], -1, 255, cv2.FILLED)
 
     parts = split_mask_on_width(combined,
-                                min_narrow_frac=0.35,
+                                min_narrow_frac=0.55,
                                 min_width_px=max(20, int(0.05 * w)),
                                 debug=debug)
 
     if len(parts) == 1 and cv2.countNonZero(parts[0]) > (h * w * 0.03):
-        # 1. Try existing hoof watershed if multiple raw contours exist
         hooves = []
         for cnt in raw_contours:
             if cv2.contourArea(cnt) < 500:
                 continue
             bx, by, bw, bh = cv2.boundingRect(cnt)
             hooves.append((float(bx + bw // 2), float(min(by + bh + 20, h - 1))))
-        
         if len(hooves) >= 2:
             ws_parts = seed_watershed_from_hooves(combined, hooves)
             ws_parts = [p for p in ws_parts if p is not None and cv2.countNonZero(p) > 50]
             if len(ws_parts) > len(parts):
                 logging.info("Watershed separated %d parts from touching-leg blob", len(ws_parts))
                 parts = ws_parts
-        else:
-            # 2. If only 1 contour exists but it's very wide, it's likely merged legs.
-            # Use horizontal erosion to break the weak lateral connection.
-            part = parts[0]
-            ys, xs = np.where(part > 0)
-            if xs.size > 0:
-                part_w = xs.max() - xs.min()
-                if part_w > w * 0.40:
-                    logging.info("Blob is very wide (w=%.0f%% of image). Splitting vertically down the middle...", 100.0 * part_w / w)
-                    x_min, x_max = xs.min(), xs.max()
-                    mid_x = (x_min + x_max) // 2
-                    
-                    left_part = np.zeros_like(part)
-                    left_part[:, :mid_x] = part[:, :mid_x]
-                    
-                    right_part = np.zeros_like(part)
-                    right_part[:, mid_x:] = part[:, mid_x:]
-                    
-                    new_parts = []
-                    if cv2.countNonZero(left_part) > 500:
-                        new_parts.append(left_part)
-                    if cv2.countNonZero(right_part) > 500:
-                        new_parts.append(right_part)
-                    
-                    if len(new_parts) > 1:
-                        logging.info("Successfully split the wide blob into 2 parts.")
-                        parts = new_parts
 
     img_cx = w / 2.0
     candidates = []
@@ -563,12 +386,7 @@ def select_front_leg_fallback(mask: np.ndarray,
     max_area = max(c['area'] for c in candidates)
     valid_candidates = [c for c in candidates if c['area'] >= max_area * 0.15]
 
-    # Soft center-bias: same 0.25 weight as AI path — penalizes edge candidates
-    # without overriding a clearly dominant centered leg.
-    valid_candidates.sort(
-        key=lambda c: c['avg_depth'] - (c['dx'] / max(w, 1)) * 0.25,
-        reverse=True
-    )
+    valid_candidates.sort(key=lambda c: (c['avg_depth'], c['area']), reverse=True)
     best = valid_candidates[0]
     logging.info("Selected front leg (area=%.0f depth=%.3f)", best['area'], best['avg_depth'])
     return best['mask']
@@ -623,7 +441,7 @@ def select_front_leg_from_keypoints(mask: np.ndarray,
 
     if cv2.countNonZero(lm) > (mask.shape[0] * mask.shape[1] * 0.02):
         parts = split_mask_on_width(lm,
-                                    min_narrow_frac=0.35,
+                                    min_narrow_frac=0.6,
                                     min_width_px=max(20, int(0.06 * mask.shape[1])),
                                     debug=debug)
         if len(parts) > 1:
@@ -768,10 +586,9 @@ def get_ai_leg_keypoints(inferencer,
         if len(kpts) > 10:
             def sc(i):
                 return float(scores[i]) if scores and len(scores) > i else 1.0
-            # Threshold raised 0.12 → 0.40 to avoid hallucinating legs on tails
-            if sc(6) > 0.40 and sc(7) > 0.40:
+            if sc(6) > 0.12 and sc(7) > 0.12:
                 legs.append((tuple(kpts[6][:2]), tuple(kpts[7][:2])))
-            if sc(9) > 0.40 and sc(10) > 0.40:
+            if sc(9) > 0.12 and sc(10) > 0.12:
                 legs.append((tuple(kpts[9][:2]), tuple(kpts[10][:2])))
     except Exception:
         return []
@@ -807,12 +624,9 @@ def find_cannon_bone_axis(leg_mask: np.ndarray,
     for ry in range(top_y, bottom_y + 1):
         xs = np.where(clean[ry] > 0)[0]
         if xs.size >= 2:
-            # FIX #15: Extract the longest continuous segment on this row
-            segs = np.split(xs, np.where(np.diff(xs) != 1)[0] + 1)
-            longest = max(segs, key=len)
-            lx, rx = int(longest[0]), int(longest[-1])
-            if rx > lx:
-                rows.append((ry, lx, rx, (float(lx) + float(rx)) / 2.0, rx - lx))
+            rows.append((ry, int(xs[0]), int(xs[-1]),
+                         (float(xs[0]) + float(xs[-1])) / 2.0,
+                         int(xs[-1] - xs[0])))
 
     if not rows:
         return (w // 2, top_y), (w // 2, bottom_y)
@@ -882,10 +696,7 @@ def analyze_symmetry(leg_mask: np.ndarray,
         if xs.size < 2:
             row_data.append(None)
             continue
-        # FIX #15: extract longest segment to ignore background blobs
-        segs = np.split(xs, np.where(np.diff(xs) != 1)[0] + 1)
-        longest = max(segs, key=len)
-        lx, rx = int(longest[0]), int(longest[-1])
+        lx, rx = int(xs[0]), int(xs[-1])
         cx = cx_at(ry)
         if lx >= cx or rx <= cx:
             row_data.append(None)
@@ -1018,8 +829,7 @@ def process_image(original_path: str, processed_path: str,
         except Exception:
             legs = []
         if legs:
-            best_leg, best_score = None, -999.0
-            img_cx = w / 2.0
+            best_leg, best_depth_val = None, -1.0
             for knee, hoof in legs:
                 line_mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.line(line_mask,
@@ -1027,17 +837,10 @@ def process_image(original_path: str, processed_path: str,
                          (int(hoof[0]), int(hoof[1])), 255, thickness=5)
                 overlap = (line_mask > 0) & (mask > 0)
                 avg_d = float(depth_map[overlap].mean()) if np.any(overlap) else 0.0
-                # Soft center-bias: penalize candidates far from image center.
-                # Weight 0.25 means a leg 40% off-center loses 0.10 depth units — significant
-                # but not enough to override a clearly dominant centered leg.
-                x_offset_norm = abs(knee[0] - img_cx) / max(w, 1)
-                score = avg_d - x_offset_norm * 0.25
-                logging.info(
-                    "Leg candidate knee=(%.1f,%.1f) hoof=(%.1f,%.1f) depth=%.3f x_off=%.2f score=%.3f",
-                    *knee, *hoof, avg_d, x_offset_norm, score
-                )
-                if score > best_score:
-                    best_score, best_leg = score, (knee, hoof)
+                logging.info("Leg candidate knee=(%.1f,%.1f) hoof=(%.1f,%.1f) depth=%.3f",
+                             *knee, *hoof, avg_d)
+                if avg_d > best_depth_val:
+                    best_depth_val, best_leg = avg_d, (knee, hoof)
 
             if best_leg is not None:
                 knee, hoof = best_leg
@@ -1069,9 +872,6 @@ def process_image(original_path: str, processed_path: str,
     per_leg_draw: list[dict] = []
 
     for info in leg_infos:
-        # ── Tail removal before axis-finding and symmetry analysis ──
-        info['mask'] = clip_tail_from_leg_mask(info['mask'])
-
         pt_top, pt_bottom = find_cannon_bone_axis(
             info['mask'],
             target_knee=info.get('knee'),
