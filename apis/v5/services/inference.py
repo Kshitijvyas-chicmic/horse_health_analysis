@@ -67,10 +67,11 @@ def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_proces
 
         max_retries = 3
         inferencer = get_frontal_mmpose()
+        gemini_key = os.environ.get("GEMINI_API_KEY")
 
         for attempt in range(max_retries):
             try:
-                process_image(str(tmp_original), str(tmp_processed), do_debug=False, inferencer=inferencer)
+                process_image(str(tmp_original), str(tmp_processed), do_debug=False, inferencer=inferencer, gemini_key=gemini_key)
 
                 if output_path.exists():
                     with open(output_path, "rb") as f:
