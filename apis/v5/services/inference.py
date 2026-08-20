@@ -46,12 +46,12 @@ def run_leg_inference(predictor: HPAPredictor, image_bytes: bytes) -> dict:
 
 def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_processed: bytes) -> str:
     """
-    Runs leg_symmetry_v3 logic on paired frontal images and returns an uploaded S3 URL.
+    Runs leg_symmetry_analyzer logic on paired frontal images and returns an uploaded S3 URL.
     """
     import tempfile
     import os
     from pathlib import Path
-    from leg_symmetry_v3 import process_image
+    from leg_symmetry_analyzer import process_image
     from apis.v5.services.upload import upload_image_to_s3
 
     with tempfile.TemporaryDirectory() as tmp_dir:
