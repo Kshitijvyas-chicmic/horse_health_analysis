@@ -12,7 +12,7 @@ from apis.v5.services.inference import get_image_bytes, run_leg_inference, proce
 from apis.v2.services.scoring import calculate_leg_score
 from apis.v2.services.quality import map_quality
 from apis.v2.services.aggregator import aggregate_scan
-from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation
+from apis.v2.services.clinical import map_condition, map_clinical_notes, map_recommendation, generate_clinical_insights, generate_overall_recommendations
 import asyncio
 import gc
 import hashlib
@@ -25,7 +25,7 @@ _LATERAL_KEYS_FOR_TOP_LEVEL_SCORE = frozenset(
 )
 
 
-def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | None]:
+async def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | None, dict | None]:
     payload = {}
 
     if not prediction.get("success"):
@@ -39,7 +39,7 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
         payload[f"{leg_key}HoofAngle"] = 0.0
         payload[f"{leg_key}PasternAngle"] = 0.0
         payload[f"{leg_key}AngleDeviation"] = 0.0
-        return payload, None
+        return payload, None, None
 
     p_angle = prediction["pastern_angle"]
     h_angle = prediction["hoof_angle"]
@@ -48,9 +48,19 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
 
     score = calculate_leg_score(p_angle, h_angle)
     quality = map_quality(conf)
-    notes = map_clinical_notes(score)
     condition = map_condition(score)
-    recommendation = map_recommendation(score)
+    
+    metrics = {
+        "leg": leg_key,
+        "pastern_angle": p_angle,
+        "hoof_angle": h_angle,
+        "hpa_deviation": hpa_dev,
+        "score": score,
+        "condition": condition
+    }
+    insights = await generate_clinical_insights(metrics)
+    notes = insights.get("notes")
+    recommendation = insights.get("recommendation")
 
     payload[f"{leg_key}ScanScore"] = score
     payload[f"{leg_key}Notes"] = notes
@@ -62,7 +72,7 @@ def _build_leg_payload(prediction: dict, leg_key: str) -> tuple[dict, float | No
     payload[f"{leg_key}PasternAngle"] = p_angle
     payload[f"{leg_key}AngleDeviation"] = hpa_dev
 
-    return payload, score
+    return payload, score, metrics
 
 
 async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> AdvancedScanResponseV5:
@@ -216,6 +226,7 @@ async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> Advanc
 
     mmpose_fields: dict = {}
     mmpose_scores: list = []
+    all_metrics: list = []
 
     for leg_key, payload, url in inference_results:
         if "Frontal" in leg_key:
@@ -231,8 +242,10 @@ async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> Advanc
             logging.info(f"📊 [v5] {leg_key}: Symmetry Analyzed, URL={url}")
         else:
             mp_pred = payload
-            mp_payload, mp_score = _build_leg_payload(mp_pred, leg_key)
+            mp_payload, mp_score, metrics = await _build_leg_payload(mp_pred, leg_key)
             mmpose_fields.update(mp_payload)
+            if metrics:
+                all_metrics.append(metrics)
             # Store the lateral annotated image URL if one was returned
             if url:
                 mmpose_fields[f"{leg_key}ImageUrl"] = url
@@ -257,7 +270,7 @@ async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> Advanc
     for leg_key, (img_orig, img_proc) in lateral_pairs.items():
         if not (img_orig or img_proc):
             err_msg = "No lateral image provided. Please upload an image."
-            mp_payload, _ = _build_leg_payload({"success": False, "error": err_msg}, leg_key)
+            mp_payload, _, _ = await _build_leg_payload({"success": False, "error": err_msg}, leg_key)
             mmpose_fields.update(mp_payload)
             
     for leg_key, (img_orig, img_proc) in frontal_pairs.items():
@@ -269,6 +282,10 @@ async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> Advanc
                 mmpose_fields[f"{leg_key}{suffix}"] = None
 
     aggregation = aggregate_scan(mmpose_scores)
+    
+    overall_rec = await generate_overall_recommendations(all_metrics)
+    if overall_rec:
+        aggregation["notes"] = overall_rec
 
     del lateral_data
     del frontal_data

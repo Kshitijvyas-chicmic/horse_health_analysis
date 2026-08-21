@@ -610,15 +610,16 @@ def process_image(original_path: str, processed_path: str,
             
             "The BOTTOM of the images shows the horse's hoof(s). "
             "There may be one front leg, or TWO front legs touching each other. The tail or horse's chest/body may also be visible.\n\n"
-            "Your task is to identify the MAIN FRONT LEG. You MUST use the Depth Map to determine which leg is closer to the camera (the red/orange/yellow one).\n\n"
+            "Your task is to identify the MAIN FRONT LEG. You MUST use the Depth Map to determine which leg is closer to the camera (the red/orange/yellow one). "
+            "Additionally, the MAIN leg is almost always the one positioned closest to the HORIZONTAL CENTER of the image (in the middle of the 'x' axis).\n\n"
             
             "Return a JSON object with three keys: 'front_leg_hoof', 'front_leg_fetlock', and 'touching_objects'.\n"
-            "- 'front_leg_hoof': a single {y, x} point (normalized 0-1000 scale, y=0 is TOP) inside the thickest part of the MAIN front leg's HOOF (closest to camera).\n"
+            "- 'front_leg_hoof': a single {y, x} point (normalized 0-1000 scale, y=0 is TOP) inside the thickest part of the MAIN front leg's HOOF (closest to the horizontal center).\n"
             "- 'front_leg_fetlock': a single {y, x} point inside the MAIN front leg's FETLOCK (ankle joint, right above the hoof).\n"
             "- 'touching_objects': a list of {y, x} points for ANY OTHER objects (like a background leg, a tail, or the body/chest) that are touching or overlapping the main front leg.\n\n"
             
             "CRITICAL RULES for touching_objects:\n"
-            "1. If there is a SEPARATE object (like a background leg or tail) that is BLUE or GREEN in the Depth Map (further away), you MUST place at least one touching_objects point on it so it can be separated.\n"
+            "1. If there is a SEPARATE object (like a background leg or tail) that is BLUE or GREEN in the Depth Map (further away), you MUST place at least one touching_objects point on it so it can be separated. The background leg is usually positioned further to the side (away from the center).\n"
             "2. WARNING: The main leg is round, so its EDGES may appear green in the Depth Map. Do NOT place a touching_objects point on the green edges of the main leg itself! Only mark distinct, separate objects.\n"
             "3. If the horse's upper chest or body is visible at the very top of the crop, place a touching_objects point there.\n"
             "4. DO NOT place a touching_objects point on the upper part of the main leg just because the color changes (e.g., from a white sock to brown hair). A single leg often has multiple colors.\n"
@@ -651,11 +652,11 @@ def process_image(original_path: str, processed_path: str,
             _secondary_key = _os.environ.get('GEMINI_API_KEY_2', '')
             
             _models_to_try = [
-                'gemini-3.5-flash-lite',
-                'gemini-1.5-flash',
                 'gemini-3.7-flash',
                 'gemini-3.6-flash',
-                'gemini-2.0-flash',
+                'gemini-3.5-flash-lite',
+                'gemini-2.5-flash',
+                'gemini-flash-latest'
             ]
             
             # Build list of (api_key, model) pairs to attempt
