@@ -199,6 +199,12 @@ Key parameters in `mmpose/custom_configs/rtmpose_hoof_4kp_copy.py`:
 
 ## 🌍 Environment Setup
 
+### 🔑 API Keys (New)
+To use the AI-generated clinical notes and the advanced frontal leg symmetry mask refinement, you MUST set your Gemini API key in your environment variables before starting the server:
+```bash
+export GEMINI_API_KEY="your_api_key_here"
+```
+
 ### Local Machine (Recommended)
 ```bash
 # Install conda

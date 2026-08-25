@@ -665,7 +665,9 @@ def process_image(original_path: str, processed_path: str,
                 _attempts += [(_secondary_key, m) for m in _models_to_try]
             
             result = None
-            for _try_key, _model_name in _attempts:
+            _max_outer_retries = 2
+            for _outer_attempt in range(_max_outer_retries + 1):
+                for _try_key, _model_name in _attempts:
                 try:
                     genai.configure(api_key=_try_key)
                     _key_label = "primary" if _try_key == api_key else "secondary"
@@ -703,9 +705,11 @@ def process_image(original_path: str, processed_path: str,
                         logging.warning("Model %s not available, skipping...", _model_name)
                     else:
                         logging.warning("Model %s error (%s), trying next...", _model_name, _je)
-
+                if result is not None:
+                    break
+            
             if result is None:
-                raise RuntimeError("All Gemini models and keys exhausted.")
+                raise RuntimeError("All Gemini models and keys exhausted after retries.")
             
             # crop_mask and dimensions are already defined at the top of the function
 
