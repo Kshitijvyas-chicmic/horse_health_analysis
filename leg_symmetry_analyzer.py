@@ -12,7 +12,7 @@ import json
 import base64
 
 try:
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
     genai = None
 
@@ -645,17 +645,16 @@ def process_image(original_path: str, processed_path: str,
         logging.info("Sending leg crop to Gemini for multi-part point seeds...")
         try:
             import time
-            from google.api_core.exceptions import ResourceExhausted
+            from google.genai.errors import APIError
+            from google.genai import types
             import os as _os
             
             # Load secondary key from env if available
             _secondary_key = _os.environ.get('GEMINI_API_KEY_2', '')
             
             _models_to_try = [
-                'gemini-3.7-flash',
                 'gemini-3.6-flash',
                 'gemini-3.5-flash-lite',
-                'gemini-2.5-flash',
                 'gemini-flash-latest'
             ]
             
@@ -669,42 +668,47 @@ def process_image(original_path: str, processed_path: str,
             for _outer_attempt in range(_max_outer_retries + 1):
                 for _try_key, _model_name in _attempts:
                     try:
-                        genai.configure(api_key=_try_key)
+                        _client = genai.Client(api_key=_try_key)
                         _key_label = "primary" if _try_key == api_key else "secondary"
                         logging.info("Trying model: %s (%s key)", _model_name, _key_label)
-                        _model = genai.GenerativeModel(_model_name, generation_config={"response_mime_type": "application/json"})
-                        contents = [{'mime_type': 'image/jpeg', 'data': b64_str}]
+                        contents = [
+                            types.Part.from_bytes(data=base64.b64decode(b64_str), mime_type='image/jpeg')
+                        ]
                         if depth_b64_str:
-                            contents.append({'mime_type': 'image/jpeg', 'data': depth_b64_str})
+                            contents.append(types.Part.from_bytes(data=base64.b64decode(depth_b64_str), mime_type='image/jpeg'))
                         contents.append(prompt)
-                        response = _model.generate_content(contents)
+                        response = _client.models.generate_content(
+                            model=_model_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(response_mime_type="application/json")
+                        )
                         result = json.loads(response.text)
                         if isinstance(result, list):
                             result = result[0]
                         logging.info("Gemini parsed output (%s/%s): %s", _key_label, _model_name, result)
                         break  # Success
-                    except ResourceExhausted as _e:
-                        # If this is the last attempt overall, we must sleep and retry.
-                        # Otherwise, immediately try the next key/model in the loop without waiting.
-                        _idx = _attempts.index((_try_key, _model_name))
-                        if _idx == len(_attempts) - 1:
-                            _retry_s = 60
-                            try:
-                                import re as _re
-                                _m = _re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+)', str(_e))
-                                if _m:
-                                    _retry_s = int(_m.group(1))
-                            except Exception:
-                                pass
-                            logging.warning("Model %s (%s key) quota exceeded. Last fallback, waiting %ds...", _model_name, _key_label, _retry_s)
-                            time.sleep(_retry_s + 2)
-                        else:
-                            logging.warning("Model %s (%s key) quota exceeded. Proceeding to next model/key immediately...", _model_name, _key_label)
-                    except (json.JSONDecodeError, Exception) as _je:
-                        if '404' in str(_je) or 'not available' in str(_je).lower():
+                    except APIError as _e:
+                        if _e.code == 429 or "429" in str(_e) or "quota" in str(_e).lower():
+                            _idx = _attempts.index((_try_key, _model_name))
+                            if _idx == len(_attempts) - 1:
+                                _retry_s = 60
+                                try:
+                                    import re as _re
+                                    _m = _re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+)', str(_e))
+                                    if _m:
+                                        _retry_s = int(_m.group(1))
+                                except Exception:
+                                    pass
+                                logging.warning("Model %s (%s key) quota exceeded. Last fallback, waiting %ds...", _model_name, _key_label, _retry_s)
+                                time.sleep(_retry_s + 2)
+                            else:
+                                logging.warning("Model %s (%s key) quota exceeded. Proceeding to next model/key immediately...", _model_name, _key_label)
+                        elif '404' in str(_e) or 'not available' in str(_e).lower():
                             logging.warning("Model %s not available, skipping...", _model_name)
                         else:
-                            logging.warning("Model %s error (%s), trying next...", _model_name, _je)
+                            logging.warning("Model %s error (%s), trying next...", _model_name, _e)
+                    except (json.JSONDecodeError, Exception) as _je:
+                        logging.warning("Model %s error (%s), trying next...", _model_name, _je)
                 if result is not None:
                     break
             

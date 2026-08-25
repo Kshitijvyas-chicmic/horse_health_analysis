@@ -66,7 +66,8 @@ import logging
 import asyncio
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 except ImportError:
     genai = None
 
@@ -90,23 +91,18 @@ async def generate_clinical_insights(metrics: dict) -> dict:
         return {"notes": fallback_notes, "recommendation": fallback_rec}
         
     try:
-        genai.configure(api_key=api_key)
         models_to_try = [
-            'gemini-3.7-flash',
             'gemini-3.6-flash',
-            'gemini-3.5-flash',
-            'gemini-2.5-flash',
+            'gemini-3.5-flash-lite',
             'gemini-flash-latest'      # Catch-all safe fallback
         ]
         
+        client = genai.Client(api_key=api_key)
         result = None
         for model_name in models_to_try:
             try:
 
-                model = genai.GenerativeModel(
-                    model_name,
-                    generation_config={"response_mime_type": "application/json"}
-                )
+
                 
                 prompt = (
                     "You are an expert veterinary assistant and farrier. I am providing you with the "
@@ -122,7 +118,11 @@ async def generate_clinical_insights(metrics: dict) -> dict:
                     "Return ONLY a JSON object with one key: 'notes'."
                 )
                 
-                response = await model.generate_content_async(prompt)
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
                 result = json.loads(response.text)
                 logging.info(f"Successfully generated clinical notes using {model_name}")
                 break
@@ -156,12 +156,10 @@ async def generate_overall_recommendations(all_metrics: list) -> Optional[str]:
         return None
         
     try:
-        genai.configure(api_key=api_key)
+        client = genai.Client(api_key=api_key)
         models_to_try = [
-            'gemini-3.7-flash',
             'gemini-3.6-flash',
-            'gemini-3.5-flash',
-            'gemini-2.5-flash',
+            'gemini-3.5-flash-lite',
             'gemini-flash-latest'
         ]
         
@@ -179,11 +177,11 @@ async def generate_overall_recommendations(all_metrics: list) -> Optional[str]:
         
         for model_name in models_to_try:
             try:
-                model = genai.GenerativeModel(
-                    model_name,
-                    generation_config={"response_mime_type": "application/json"}
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
                 )
-                response = await model.generate_content_async(prompt)
                 result = json.loads(response.text)
                 return result.get("recommendation")
             except Exception as e:
