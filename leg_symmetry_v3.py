@@ -7,17 +7,70 @@ import cv2
 import numpy as np
 import sys
 from PIL import Image as PILImage
+from transformers import pipeline as hf_pipeline
 from mmpose.apis import MMPoseInferencer
-import json
-import base64
+import threading
 
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
+_depth_lock = threading.Lock()
+
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
+_DEPTH_MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
+_depth_pipe = None
+
+
+# ---------------------------------------------------------------------------
+# Depth estimation
+# ---------------------------------------------------------------------------
+
+def get_depth_pipe():
+    global _depth_pipe
+    if _depth_pipe is None:
+        import torch
+        device_id = 0 if torch.cuda.is_available() else -1
+        logging.info(f"Loading Depth Anything V2 Small on device {device_id} …")
+        _depth_pipe = hf_pipeline("depth-estimation", model=_DEPTH_MODEL_ID, device=device_id)
+        logging.info("Depth Anything V2 ready.")
+    return _depth_pipe
+
+
+def estimate_depth(image_bgr: np.ndarray,
+                   fg_mask: np.ndarray | None = None) -> np.ndarray:
+    """Depth Anything V2 → float32 depth map [0, 1].  1.0 = closest.
+
+    FIX #1: Background pixels are filled with neutral gray (127) before
+    inference so the model is not confused by black zeros.  After inference,
+    depth outside fg_mask is zeroed so only horse pixels contribute to scoring.
+    """
+    h, w = image_bgr.shape[:2]
+
+    if fg_mask is not None:
+        input_img = image_bgr.copy()
+        input_img[fg_mask == 0] = 127
+    else:
+        input_img = image_bgr
+
+    logging.info("Running Depth Anything V2 …")
+    rgb = cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB)
+    pil_img = PILImage.fromarray(rgb)
+    
+    with _depth_lock:
+        result = get_depth_pipe()(pil_img)
+        
+    depth_np = np.array(result["depth"]).astype(np.float32)
+
+    if depth_np.shape[0] != h or depth_np.shape[1] != w:
+        depth_np = cv2.resize(depth_np, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    d_min, d_max = depth_np.min(), depth_np.max()
+    depth_np = (depth_np - d_min) / (d_max - d_min) if d_max > d_min else np.zeros_like(depth_np)
+
+    if fg_mask is not None:
+        depth_np[fg_mask == 0] = 0.0
+
+    logging.info("Depth map ready (shape=%s).", depth_np.shape)
+    return depth_np
 
 
 # ---------------------------------------------------------------------------
@@ -51,11 +104,134 @@ def extract_mask_from_processed(processed_path: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Legacy split_mask_on_width removed (Gemini handles touching objects)
+# FIX #7 — split_mask_on_width (module level)
 # ---------------------------------------------------------------------------
 
+def split_mask_on_width(mask_region: np.ndarray,
+                        min_narrow_frac: float = 0.6,
+                        min_width_px: int = 30,
+                        debug: bool = False) -> list[np.ndarray]:
+    """Split a mask at narrow 'waist' rows; return component masks sorted by area desc."""
+    ys = np.where(np.any(mask_region > 0, axis=1))[0]
+    if ys.size == 0:
+        return [mask_region]
+    y0, y1 = int(ys[0]), int(ys[-1])
+
+    widths = np.zeros(y1 - y0 + 1, dtype=np.int32)
+    for i, ry in enumerate(range(y0, y1 + 1)):
+        xs = np.where(mask_region[ry] > 0)[0]
+        widths[i] = int(xs[-1] - xs[0]) if xs.size >= 2 else 0
+
+    nonzero = widths[widths > 0]
+    if nonzero.size == 0:
+        return [mask_region]
+    median_w = int(np.median(nonzero))
+    thresh = max(min_width_px, int(median_w * min_narrow_frac))
+
+    narrow = widths < thresh
+    cut_rows = []
+    i = 0
+    while i < len(narrow):
+        if narrow[i]:
+            j = i
+            while j + 1 < len(narrow) and narrow[j + 1]:
+                j += 1
+            cut_rows.append(y0 + (i + j) // 2)
+            i = j + 1
+        else:
+            i += 1
+
+    if not cut_rows:
+        return [mask_region]
+
+    split = mask_region.copy()
+    pad = 2
+    for r in cut_rows:
+        split[max(y0, r - pad): min(y1, r + pad) + 1, :] = 0
+
+    num_labels, labels = cv2.connectedComponents(split)
+    parts = []
+    for lab in range(1, num_labels):
+        part = np.zeros_like(mask_region)
+        part[labels == lab] = 255
+        if cv2.countNonZero(part) > 50:
+            parts.append(part)
+
+    if not parts:
+        return [mask_region]
+    parts.sort(key=lambda m: cv2.countNonZero(m), reverse=True)
+    if debug:
+        logging.info("split_mask_on_width: %d parts (median_w=%d thresh=%d cuts=%s)",
+                     len(parts), median_w, thresh, cut_rows)
+    return parts
 
 
+# ---------------------------------------------------------------------------
+# FIX #9 (ACTIVATED) — depth-based foreground prefilter
+# ---------------------------------------------------------------------------
+
+def depth_prefilter_mask(mask: np.ndarray,
+                          depth_map: np.ndarray,
+                          depth_delta: float = 0.27) -> np.ndarray:
+    """Remove far/back-leg pixels from the foreground mask before leg selection.
+
+    Keeps foreground pixels whose depth >= the Nth percentile of foreground
+    depths.  In front-on shots this drops the back leg (blue in TURBO) while
+    keeping the front leg (orange/red).
+
+    FIX #12 — percentile lowered from 50 → 25.
+    When the camera is at ground level pointing upward the hoof is the closest
+    point (depth ≈ 1.0) while the cannon bone is further away (depth ≈ 0.4–0.6).
+    A 50th-percentile threshold sits exactly at the hoof/cannon-bone boundary,
+    stripping the cannon bone entirely.  25th-percentile keeps the vast majority
+    of the front leg while still discarding the clearly-far back leg pixels.
+
+    FIX #13 — height-preservation safety guard.
+    The existing pixel-count guard (< 15 %) does not catch the case where the
+    top of the leg is cut off (cannon bone has low pixel count relative to the
+    wide hoof).  An additional check compares the bounding-box HEIGHT of the
+    filtered mask to the original: if height shrinks by more than 35 % the
+    filter is discarding the top of the leg, so the original is returned.
+    """
+    fg_depths = depth_map[mask > 0]
+    if fg_depths.size == 0:
+        return mask
+
+    # Record original bounding-box height for the height-safety check
+    ys_orig = np.where(np.any(mask > 0, axis=1))[0]
+    orig_height = int(ys_orig[-1] - ys_orig[0]) if ys_orig.size >= 2 else 0
+
+    farthest_depth = float(fg_depths.min())
+    thresh = farthest_depth + depth_delta
+    filtered = np.zeros_like(mask)
+    filtered[(mask > 0) & (depth_map >= thresh)] = 255
+
+    # Close small gaps so the kept region stays contiguous
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
+
+    # Safety guard 1: pixel count (original)
+    if cv2.countNonZero(filtered) < cv2.countNonZero(mask) * 0.15:
+        logging.warning("depth_prefilter_mask: pixel count too small — returning original mask.")
+        return mask
+
+    # Safety guard 2 (FIX #13): height preservation
+    # If the filter is cutting off the top of the leg the bounding-box height
+    # shrinks.  More than 35 % shrinkage means the cannon bone is being lost.
+    if orig_height > 0:
+        ys_filt = np.where(np.any(filtered > 0, axis=1))[0]
+        if ys_filt.size >= 2:
+            filt_height = int(ys_filt[-1] - ys_filt[0])
+            if filt_height < orig_height * 0.65:
+                logging.warning(
+                    "depth_prefilter_mask: height shrank to %.0f%% (orig=%d filt=%d) "
+                    "— top of leg cut off; returning original mask.",
+                    100.0 * filt_height / orig_height, orig_height, filt_height)
+                return mask
+
+    logging.info("depth_prefilter_mask: kept %.1f%% of fg pixels (thresh depth=%.3f)",
+                 100.0 * cv2.countNonZero(filtered) / max(1, cv2.countNonZero(mask)), thresh)
+    return filtered
 
 
 def trim_upper_leg_fraction(leg_mask: np.ndarray, exclude_top_frac: float = 0.05) -> np.ndarray:
@@ -78,8 +254,39 @@ def trim_upper_leg_fraction(leg_mask: np.ndarray, exclude_top_frac: float = 0.05
 
 
 # ---------------------------------------------------------------------------
-# Legacy tail rejection removed (Gemini handles tail isolation)
+# FIX #3 — tail rejection helper
 # ---------------------------------------------------------------------------
+
+def is_likely_tail(contour: np.ndarray, mask: np.ndarray) -> bool:
+    """Return True if contour resembles a tail rather than a leg."""
+    x, y, cw, ch = cv2.boundingRect(contour)
+    h_img, w_img = mask.shape
+    if ch == 0:
+        return False
+
+    aspect = ch / max(cw, 1)
+    if aspect > 6 and cw < w_img * 0.07:
+        return True
+
+    top_end = y + max(1, int(ch * 0.20))
+    bot_start = y + int(ch * 0.80)
+    top_ws, bot_ws = [], []
+    for ry in range(y, min(top_end + 1, h_img)):
+        xs = np.where(mask[ry] > 0)[0]
+        if xs.size >= 2:
+            top_ws.append(int(xs[-1] - xs[0]))
+    for ry in range(bot_start, min(y + ch + 1, h_img)):
+        xs = np.where(mask[ry] > 0)[0]
+        if xs.size >= 2:
+            bot_ws.append(int(xs[-1] - xs[0]))
+
+    if top_ws and bot_ws:
+        avg_top = float(np.mean(top_ws))
+        avg_bot = float(np.mean(bot_ws))
+        if avg_bot < avg_top * 0.45 and avg_bot < w_img * 0.04:
+            return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -87,30 +294,67 @@ def trim_upper_leg_fraction(leg_mask: np.ndarray, exclude_top_frac: float = 0.05
 # ---------------------------------------------------------------------------
 
 def select_front_leg_fallback(mask: np.ndarray,
+                               depth_map: np.ndarray | None = None,
                                debug: bool = False) -> np.ndarray | None:
-    """Select the frontmost front leg using simple heuristics to generate a candidate blob.
+    """Select the frontmost front leg using depth + heuristics.
+
+    Receives depth-filtered mask (FIX #9) so back-leg pixels are already
+    removed before this function runs.
     """
     h, w = mask.shape
     zone = np.zeros_like(mask)
+    # FIX #14: zone cutoff lowered from 35% → 20% of image height.
+    # At 35% the cannon bone (which starts at ~20-30% from the top in
+    # ground-level shots) was sometimes excluded from the candidate region.
     zone[int(h * 0.20):] = mask[int(h * 0.20):]
 
     raw_contours, _ = cv2.findContours(zone, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not raw_contours:
         return None
 
+    combined = np.zeros_like(mask)
+    for cnt in raw_contours:
+        if cv2.contourArea(cnt) >= 500:
+            cv2.drawContours(combined, [cnt], -1, 255, cv2.FILLED)
+
+    parts = split_mask_on_width(combined,
+                                min_narrow_frac=0.55,
+                                min_width_px=max(20, int(0.05 * w)),
+                                debug=debug)
+
+    if len(parts) == 1 and cv2.countNonZero(parts[0]) > (h * w * 0.03):
+        hooves = []
+        for cnt in raw_contours:
+            if cv2.contourArea(cnt) < 500:
+                continue
+            bx, by, bw, bh = cv2.boundingRect(cnt)
+            hooves.append((float(bx + bw // 2), float(min(by + bh + 20, h - 1))))
+        if len(hooves) >= 2:
+            ws_parts = seed_watershed_from_hooves(combined, hooves)
+            ws_parts = [p for p in ws_parts if p is not None and cv2.countNonZero(p) > 50]
+            if len(ws_parts) > len(parts):
+                logging.info("Watershed separated %d parts from touching-leg blob", len(ws_parts))
+                parts = ws_parts
+
     img_cx = w / 2.0
     candidates = []
-    for cnt in raw_contours:
+    for part in parts:
+        cnts, _ = cv2.findContours(part, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            continue
+        cnt = max(cnts, key=cv2.contourArea)
         area = cv2.contourArea(cnt)
-        if area < 800:
+        if area < 500:
+            continue
+
+        if is_likely_tail(cnt, part):
+            if debug:
+                logging.info("Rejected tail-like contour (area=%.0f)", area)
             continue
 
         bx, by, bw, bh = cv2.boundingRect(cnt)
         cx_part = bx + bw / 2.0
         dx = abs(cx_part - img_cx)
-
-        part = np.zeros_like(mask)
-        cv2.drawContours(part, [cnt], -1, 255, cv2.FILLED)
 
         bottom_width = 0
         for ry in range(by + int(bh * 0.75), min(by + bh + 1, h)):
@@ -118,25 +362,33 @@ def select_front_leg_fallback(mask: np.ndarray,
             if xs.size > 0:
                 bottom_width = max(bottom_width, int(xs[-1] - xs[0]))
 
-        if bottom_width < max(20, int(0.12 * w)):
-            continue
+        avg_depth = 0.0
+        if depth_map is not None:
+            fg_px = part > 0
+            if np.any(fg_px):
+                avg_depth = float(depth_map[fg_px].mean())
 
         if debug:
-            logging.info("Candidate: area=%.0f bottom_w=%d dx=%.1f",
-                         area, bottom_width, dx)
+            logging.info("Candidate: area=%.0f bottom_w=%d dx=%.1f depth=%.3f",
+                         area, bottom_width, dx, avg_depth)
         candidates.append({
             'mask': part, 'area': area,
-            'bottom_width': bottom_width, 'dx': dx,
+            'bottom_width': bottom_width, 'dx': dx, 'avg_depth': avg_depth,
         })
 
+    candidates = [c for c in candidates
+                  if c['area'] >= 800 and c['bottom_width'] >= max(20, int(0.12 * w))]
     if not candidates:
         return None
 
+    # FIX #15: Don't let a tiny foreground blob beat the massive main leg.
+    # Only consider candidates that have at least 15% of the area of the largest candidate.
     max_area = max(c['area'] for c in candidates)
     valid_candidates = [c for c in candidates if c['area'] >= max_area * 0.15]
-    valid_candidates.sort(key=lambda c: c['area'], reverse=True)
+
+    valid_candidates.sort(key=lambda c: (c['avg_depth'], c['area']), reverse=True)
     best = valid_candidates[0]
-    logging.info("Selected front leg candidate blob (area=%.0f) for Gemini", best['area'])
+    logging.info("Selected front leg (area=%.0f depth=%.3f)", best['area'], best['avg_depth'])
     return best['mask']
 
 
@@ -187,6 +439,20 @@ def select_front_leg_from_keypoints(mask: np.ndarray,
     lm = np.zeros_like(mask)
     cv2.drawContours(lm, [best_cnt], -1, 255, cv2.FILLED)
 
+    if cv2.countNonZero(lm) > (mask.shape[0] * mask.shape[1] * 0.02):
+        parts = split_mask_on_width(lm,
+                                    min_narrow_frac=0.6,
+                                    min_width_px=max(20, int(0.06 * mask.shape[1])),
+                                    debug=debug)
+        if len(parts) > 1:
+            kx = int(round(knee[0]))
+            best_part = min(
+                parts,
+                key=lambda p: abs(int(np.mean(np.where(p > 0)[1])) - kx)
+                              if np.any(p > 0) else float('inf')
+            )
+            lm = best_part
+
     ky, hy = int(round(knee[1])), int(round(hoof[1]))
     top_clip = max(0, ky - 20)
     bottom_clip = min(mask.shape[0] - 1, hy + 60)
@@ -210,8 +476,73 @@ def select_front_leg_from_keypoints(mask: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
-# Legacy watershed logic removed (Gemini handles touching hooves/legs)
+# Watershed leg separator
 # ---------------------------------------------------------------------------
+
+def seed_watershed_from_hooves(mask: np.ndarray,
+                                hooves: list[tuple[float, float]],
+                                rgba: np.ndarray | None = None,
+                                snap_radius: int = 30) -> list:
+    """Segment mask into regions seeded at each hoof point using watershed."""
+    if mask is None or mask.size == 0:
+        return []
+    bm = (mask > 0).astype(np.uint8) * 255
+    h, w = bm.shape
+
+    def snap_to_mask(xf, yf):
+        x, y = int(round(xf)), int(round(yf))
+        if 0 <= x < w and 0 <= y < h and bm[y, x] > 0:
+            return (x, y)
+        for r in range(1, snap_radius + 1):
+            best, bestd = None, None
+            for yy in range(max(0, y - r), min(h, y + r + 1)):
+                for xx in range(max(0, x - r), min(w, x + r + 1)):
+                    if bm[yy, xx] > 0:
+                        d = (xx - x) ** 2 + (yy - y) ** 2
+                        if bestd is None or d < bestd:
+                            bestd, best = d, (xx, yy)
+            if best:
+                return best
+        return None
+
+    markers = np.zeros((h, w), dtype=np.int32)
+    seed_points = []
+    for i, (kx, ky) in enumerate(hooves, start=1):
+        s = snap_to_mask(kx, ky)
+        seed_points.append(s)
+        if s:
+            cv2.circle(markers, s, 6, i, -1)
+
+    if all(s is None for s in seed_points):
+        return []
+
+    try:
+        if rgba is not None:
+            gray = cv2.cvtColor(rgba[..., :3], cv2.COLOR_RGB2GRAY)
+            inv = (255 - gray).astype(np.float32) / 255.0
+            dist = cv2.distanceTransform((bm // 255).astype(np.uint8), cv2.DIST_L2, 5).astype(np.float32)
+            if dist.max() <= 0:
+                return []
+            topo = dist * (1.0 + 0.7 * inv)
+            topo8 = np.uint8((topo / topo.max()) * 255.0)
+            img3 = cv2.cvtColor(topo8, cv2.COLOR_GRAY2BGR)
+        else:
+            dist = cv2.distanceTransform((bm // 255).astype(np.uint8), cv2.DIST_L2, 5)
+            if dist.max() <= 0:
+                return []
+            dist8 = np.uint8((dist / dist.max()) * 255.0)
+            img3 = cv2.cvtColor(dist8, cv2.COLOR_GRAY2BGR)
+        cv2.watershed(img3, markers)
+    except Exception as e:
+        logging.warning("watershed failed: %s", e)
+        return []
+
+    parts = []
+    for i in range(1, len(hooves) + 1):
+        m = np.zeros_like(bm)
+        m[markers == i] = 255
+        parts.append(m if cv2.countNonZero(m) > 50 else None)
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +759,7 @@ def apply_overlay(img: np.ndarray, green_mask: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def process_image(original_path: str, processed_path: str,
-                  do_debug: bool = False, inferencer=None, gemini_key: str = None) -> None:
+                  do_debug: bool = False, inferencer=None) -> None:
     """Analyse horse leg symmetry.
 
     Parameters
@@ -470,8 +801,23 @@ def process_image(original_path: str, processed_path: str,
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
         processed_bgra = cv2.resize(processed_bgra, (w, h), interpolation=cv2.INTER_LINEAR)
 
-    # We no longer use Depth Anything V2. The mask is used directly.
-    depth_mask = mask.copy()
+    # Build an BGR view of the processed image for depth estimation
+    # Background pixels are already transparent; we fill them with neutral
+    # gray (127) so Depth Anything V2 is not biased by black zeros.
+    fg_bgr = processed_bgra[:, :, :3].copy()
+    fg_bgr[mask == 0] = 127
+
+    # --- Depth estimation (FIX #1: neutral-gray background fill) ---
+    depth_map = estimate_depth(fg_bgr, fg_mask=mask)
+    depth_color = cv2.applyColorMap((depth_map * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+    cv2.imwrite(str(p.parent / f"{p.stem}_depth.png"), depth_color)
+    logging.info("Saved depth map.")
+
+    # --- Depth prefilter: remove far/back-leg pixels (FIX #9 / #12 / #13) ---
+    depth_mask = depth_prefilter_mask(mask, depth_map, depth_delta=0.27)
+    if do_debug:
+        cv2.imwrite(str(p.parent / f"{p.stem}_depth_mask.png"), depth_mask)
+        logging.info("Saved depth-filtered mask (debug).")
 
     leg_masks = []
     leg_infos = []
@@ -483,16 +829,18 @@ def process_image(original_path: str, processed_path: str,
         except Exception:
             legs = []
         if legs:
-            # Pick the leg closest to the center line
-            best_leg = None
-            min_dx = float('inf')
-            img_cx = w / 2.0
+            best_leg, best_depth_val = None, -1.0
             for knee, hoof in legs:
-                cx = (knee[0] + hoof[0]) / 2.0
-                dx = abs(cx - img_cx)
-                if dx < min_dx:
-                    min_dx = dx
-                    best_leg = (knee, hoof)
+                line_mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.line(line_mask,
+                         (int(knee[0]), int(knee[1])),
+                         (int(hoof[0]), int(hoof[1])), 255, thickness=5)
+                overlap = (line_mask > 0) & (mask > 0)
+                avg_d = float(depth_map[overlap].mean()) if np.any(overlap) else 0.0
+                logging.info("Leg candidate knee=(%.1f,%.1f) hoof=(%.1f,%.1f) depth=%.3f",
+                             *knee, *hoof, avg_d)
+                if avg_d > best_depth_val:
+                    best_depth_val, best_leg = avg_d, (knee, hoof)
 
             if best_leg is not None:
                 knee, hoof = best_leg
@@ -507,7 +855,7 @@ def process_image(original_path: str, processed_path: str,
     # --- Fallback path ---
     if not leg_masks:
         logging.warning("AI keypoints missing or failed — using fallback leg selection.")
-        lm = select_front_leg_fallback(depth_mask, debug=do_debug)
+        lm = select_front_leg_fallback(depth_mask, depth_map=depth_map, debug=do_debug)
         if lm is None:
             logging.warning("No front leg found for %s", p.name)
             cv2.imwrite(str(p.parent / f"{p.stem}_analyzed.jpg"), img)
@@ -523,234 +871,13 @@ def process_image(original_path: str, processed_path: str,
     combined_red = np.zeros((h, w), dtype=np.uint8)
     per_leg_draw: list[dict] = []
 
-    def refine_mask_with_gemini(original_bgr: np.ndarray, mask: np.ndarray, api_key: str, nobg_bgra: np.ndarray = None) -> np.ndarray:
-        if genai is None:
-            logging.warning("google-generativeai is not installed. Cannot use Gemini.")
-            return mask
-
-        ys, xs = np.where(mask > 0)
-        if ys.size == 0:
-            return mask
-        
-        y_min, y_max = int(ys.min()), int(ys.max())
-        x_min, x_max = int(xs.min()), int(xs.max())
-
-        pad = 20
-        hm, wm = mask.shape
-        c_y_min, c_y_max = max(0, y_min - pad), min(hm, y_max + pad)
-        c_x_min, c_x_max = max(0, x_min - pad), min(wm, x_max + pad)
-
-        # Prefer the background-removed image so Gemini sees only the clean horse
-        # silhouette (no barn, ground, other horses). This makes leg/tail distinction easier.
-        if nobg_bgra is not None:
-            crop_bgr = nobg_bgra[c_y_min:c_y_max, c_x_min:c_x_max, :3].copy()
-            # Set pixels with alpha below threshold to white so the silhouette reads clearly on a neutral bg
-            alpha = nobg_bgra[c_y_min:c_y_max, c_x_min:c_x_max, 3]
-            crop_bgr[alpha < 128] = 255
-        else:
-            crop_bgr = original_bgr[c_y_min:c_y_max, c_x_min:c_x_max]
-
-        _, buffer = cv2.imencode('.jpg', crop_bgr)
-        b64_str = base64.b64encode(buffer).decode('utf-8')
-
-        prompt = (
-            "You are an expert veterinary image analyst. This image shows a cropped region of a horse. "
-            "The TOP of the image shows the horse's tail or body hair. "
-            "The BOTTOM of the image shows the horse's front leg(s) and hoof(s). "
-            "There may be one front leg, or TWO front legs touching each other, and possibly a tail also touching. "
-            "Return a JSON object with three keys: 'front_leg_hoof', 'front_leg_fetlock', and 'touching_objects'. "
-            "'front_leg_hoof' must be a single {y, x} point (in normalized 0 to 1000 scale, where y=0 is TOP and y=1000 is BOTTOM) "
-            "placed safely inside the thickest part of the MAIN front leg's HOOF (closest to horizontal center, usually y > 700). "
-            "'front_leg_fetlock' must be a single {y, x} point placed safely inside the MAIN front leg's FETLOCK (ankle joint) "
-            "(the joint right above the hoof, below the long straight cannon bone). "
-            "'touching_objects' must be a LIST of {y, x} points. For EACH distinct object touching the main front leg "
-            "(a second front leg, tail hair, back leg), place one point safely inside that object. "
-            "CRITICAL: If you see TWO separate leg/hoof shapes at the bottom, they MUST each get their own seed point. "
-            "If nothing is touching the main front leg, 'touching_objects' should be an empty list.\n\n"
-            "OUTPUT STRICTLY VALID JSON ONLY. Example format:\n"
-            "{\n"
-            '  "front_leg_hoof": {"y": 850, "x": 450},\n'
-            '  "front_leg_fetlock": {"y": 650, "x": 450},\n'
-            '  "touching_objects": [\n'
-            '    {"y": 800, "x": 650},\n'
-            '    {"y": 300, "x": 500}\n'
-            '  ]\n'
-            "}"
-        )
-
-        logging.info("Sending leg crop to Gemini for multi-part point seeds...")
-        try:
-            import time
-            from google.api_core.exceptions import ResourceExhausted
-            import os as _os
-            
-            # Load secondary key from env if available
-            _secondary_key = _os.environ.get('GEMINI_API_KEY_2', '')
-            
-            # Waterfall: try all models on primary key, then all models on secondary key
-            _models_to_try = [
-                'gemini-3.6-flash',
-                'gemini-3.7-flash',
-                'gemini-3.5-flash',
-                'gemini-3.1-pro-preview',
-                'gemini-3.5-flash-lite',
-                'gemini-3.1-flash-lite',
-            ]
-            
-            # Build list of (api_key, model) pairs to attempt
-            _attempts = [(api_key, m) for m in _models_to_try]
-            if _secondary_key and _secondary_key != api_key:
-                _attempts += [(_secondary_key, m) for m in _models_to_try]
-            
-            result = None
-            for _try_key, _model_name in _attempts:
-                try:
-                    genai.configure(api_key=_try_key)
-                    _key_label = "primary" if _try_key == api_key else "secondary"
-                    logging.info("Trying model: %s (%s key)", _model_name, _key_label)
-                    _model = genai.GenerativeModel(_model_name, generation_config={"response_mime_type": "application/json"})
-                    response = _model.generate_content([
-                        {'mime_type': 'image/jpeg', 'data': b64_str},
-                        prompt
-                    ])
-                    result = json.loads(response.text)
-                    if isinstance(result, list):
-                        result = result[0]
-                    logging.info("Gemini parsed output (%s/%s): %s", _key_label, _model_name, result)
-                    break  # Success
-                except ResourceExhausted as _e:
-                    # If this is the last attempt overall, we must sleep and retry.
-                    # Otherwise, immediately try the next key/model in the loop without waiting.
-                    _idx = _attempts.index((_try_key, _model_name))
-                    if _idx == len(_attempts) - 1:
-                        _retry_s = 60
-                        try:
-                            import re as _re
-                            _m = _re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+)', str(_e))
-                            if _m:
-                                _retry_s = int(_m.group(1))
-                        except Exception:
-                            pass
-                        logging.warning("Model %s (%s key) quota exceeded. Last fallback, waiting %ds...", _model_name, _key_label, _retry_s)
-                        time.sleep(_retry_s + 2)
-                    else:
-                        logging.warning("Model %s (%s key) quota exceeded. Proceeding to next model/key immediately...", _model_name, _key_label)
-                except (json.JSONDecodeError, Exception) as _je:
-                    if '404' in str(_je) or 'not available' in str(_je).lower():
-                        logging.warning("Model %s not available, skipping...", _model_name)
-                    else:
-                        logging.warning("Model %s error (%s), trying next...", _model_name, _je)
-
-            if result is None:
-                raise RuntimeError("All Gemini models and keys exhausted.")
-            
-            ch, cw = crop_bgr.shape[:2]
-            crop_mask = mask[c_y_min:c_y_min+ch, c_x_min:c_x_min+cw].copy()
-
-            # Use nobg alpha as pixel boundary if available — it gives finer per-pixel
-            # separation than the coarse blob mask (catches semi-transparent 2nd leg too)
-            if nobg_bgra is not None:
-                crop_alpha = nobg_bgra[c_y_min:c_y_min+ch, c_x_min:c_x_min+cw, 3].copy()
-                ws_boundary_mask = (crop_alpha >= 128).astype(np.uint8) * 255
-            else:
-                ws_boundary_mask = crop_mask
-
-            # Create markers for watershed
-            markers = np.zeros_like(ws_boundary_mask, dtype=np.int32)
-            
-            # Background = pixels fully outside the horse silhouette
-            markers[ws_boundary_mask == 0] = 1
-            
-            # Process the front leg seeds (hoof and fetlock)
-            front_leg_label = 2
-            
-            hoof_obj = result.get('front_leg_hoof', {})
-            fetlock_obj = result.get('front_leg_fetlock', {})
-            
-            hx, hy, fx, fy = -1, -1, -1, -1
-            
-            if isinstance(hoof_obj, dict) and hoof_obj:
-                n_y, n_x = int(hoof_obj.get('y', -1)), int(hoof_obj.get('x', -1))
-                if n_y != -1 and n_x != -1:
-                    hy = int((n_y / 1000.0) * ch)
-                    hx = int((n_x / 1000.0) * cw)
-                    cv2.circle(markers, (hx, hy), 15, front_leg_label, -1)
-            
-            if isinstance(fetlock_obj, dict) and fetlock_obj:
-                n_y, n_x = int(fetlock_obj.get('y', -1)), int(fetlock_obj.get('x', -1))
-                if n_y != -1 and n_x != -1:
-                    fy = int((n_y / 1000.0) * ch)
-                    fx = int((n_x / 1000.0) * cw)
-                    cv2.circle(markers, (fx, fy), 15, front_leg_label, -1)
-            
-            # If both were provided, draw a thick line between them to seed the core up to the fetlock
-            if hy != -1 and fy != -1:
-                cv2.line(markers, (hx, hy), (fx, fy), front_leg_label, 10)
-            
-            # Process all touching background objects — each gets its own label
-            background_label = 3
-            touching_objects = result.get('touching_objects', [])
-            if isinstance(touching_objects, list):
-                for point_obj in touching_objects:
-                    if not isinstance(point_obj, dict):
-                        continue
-                    n_y, n_x = int(point_obj.get('y', -1)), int(point_obj.get('x', -1))
-                    if n_y != -1 and n_x != -1:
-                        cy = int((n_y / 1000.0) * ch)
-                        cx = int((n_x / 1000.0) * cw)
-                        cv2.circle(markers, (cx, cy), 15, background_label, -1)
-                        background_label += 1
-
-            # Use the ORIGINAL photo (not the white-bg nobg crop) for watershed gradients
-            # so the algorithm can trace real photographic edges between the two legs.
-            crop_orig = original_bgr[c_y_min:c_y_min+ch, c_x_min:c_x_min+cw].copy()
-            crop_bgr_ws = cv2.GaussianBlur(crop_orig, (5, 5), 0)
-            
-            # Mask out true background pixels so watershed boundary is respected
-            crop_bgr_ws[ws_boundary_mask == 0] = 0
-            
-            cv2.watershed(crop_bgr_ws, markers)
-            
-            # Keep only the front_leg region
-            final_crop_mask = np.zeros_like(ws_boundary_mask)
-            final_crop_mask[markers == front_leg_label] = 255
-            
-            # --- TRIM ABOVE FETLOCK ---
-            # The user requested to cut the leg mask above the fetlock to include a little cannon bone.
-            if fy != -1 and hy != -1:
-                # Calculate the vertical distance between the hoof and the fetlock
-                dy = max(10, hy - fy)
-                # Go up from the fetlock by that same distance to reach the lower cannon bone
-                trim_y = max(0, fy - dy)
-                final_crop_mask[:trim_y, :] = 0
-                logging.info(f"Trimmed mask in lower cannon bone (crop y={trim_y}, dy={dy})")
-            
-            refined_mask = np.zeros_like(mask)
-            refined_mask[c_y_min:c_y_min+ch, c_x_min:c_x_min+cw] = final_crop_mask
-            
-            logging.info("Watershed successfully isolated the front leg using Gemini seeds.")
-            
-            return refined_mask
-        except Exception as e:
-            logging.error("Failed to refine mask with Gemini: %s", e)
-            return mask
-
-    for i, info in enumerate(leg_infos):
-        mask_to_use = info['mask']
-        
-        if gemini_key:
-            # Pass the FULL original mask to Gemini so the crop includes the entire leg (cannon bone),
-            # rather than the artificially trimmed mask returned by the fallback logic.
-            mask_to_use = refine_mask_with_gemini(img, mask, gemini_key, nobg_bgra=processed_bgra)
-            if do_debug:
-                cv2.imwrite(str(p.parent / f"{p.stem}_gemini_refined_leg_{i}.png"), mask_to_use)
-
+    for info in leg_infos:
         pt_top, pt_bottom = find_cannon_bone_axis(
-            mask_to_use,
+            info['mask'],
             target_knee=info.get('knee'),
             target_hoof=info.get('hoof'),
         )
-        green, red, dominant = analyze_symmetry(mask_to_use, pt_top, pt_bottom)
+        green, red, dominant = analyze_symmetry(info['mask'], pt_top, pt_bottom)
         combined_green = np.maximum(combined_green, green)
         combined_red = np.maximum(combined_red, red)
         per_leg_draw.append({'pt_top': pt_top, 'pt_bottom': pt_bottom, 'dominant': dominant})
@@ -795,8 +922,6 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Save intermediate debug images")
     parser.add_argument("--use-ai", action="store_true",
                         help="Enable MMPose AI keypoint detection if available")
-    parser.add_argument("--gemini-key", type=str, default=None,
-                        help="Optional Gemini API key for VLM mask refinement")
     parser.add_argument("--model-path", type=str, default=None,
                         help="Optional local model path for MMPoseInferencer")
     parser.add_argument("--device", type=str, default=None,
@@ -814,7 +939,7 @@ def main():
             logging.warning("Failed to initialize MMPoseInferencer: %s", e)
 
     try:
-        process_image(args.original_image, args.processed_image, do_debug=args.debug, inferencer=inferencer, gemini_key=args.gemini_key)
+        process_image(args.original_image, args.processed_image, do_debug=args.debug, inferencer=inferencer)
     except Exception as e:
         logging.exception("Failed processing %s: %s", args.original_image, e)
 

@@ -455,6 +455,11 @@ def apply_overlay(img: np.ndarray, green_mask: np.ndarray,
 
 def process_image(original_path: str, processed_path: str,
                   do_debug: bool = False, inferencer=None, gemini_key: str = None) -> None:
+    if genai is None:
+        logging.warning("google-generativeai is not installed. Falling back to leg_symmetry_v3 script.")
+        import leg_symmetry_v3
+        return leg_symmetry_v3.process_image(original_path, processed_path, do_debug=do_debug, inferencer=inferencer)
+
     """Analyse horse leg symmetry.
 
     Parameters
