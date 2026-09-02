@@ -197,13 +197,42 @@ class HPAPredictor:
             p_angle = clinical_angle(angle_from_vertical(v_p))
             h_angle = clinical_angle(angle_from_vertical(v_h))
             diff = abs(p_angle - h_angle)
+            ideal_angle = (p_angle + h_angle) / 2.0
             
             p0, p1, p2, p3 = keypoints[0], keypoints[1], keypoints[2], keypoints[3]
             draw_angle_line(vis, p1, p0, (0, 165, 255), scale=1.0)
             draw_angle_line(vis, p3, p2, (255, 128, 0), scale=1.0)
             
+            p0_np = np.array(p0, dtype=np.float32)
+            p1_np = np.array(p1, dtype=np.float32)
+            p2_np = np.array(p2, dtype=np.float32)
+            p3_np = np.array(p3, dtype=np.float32)
+            
+            pastern_len = np.linalg.norm(p0_np - p1_np)
+            if pastern_len > 1e-3:
+                is_left_facing = p3_np[0] < p0_np[0]
+                alpha_rad = math.radians(90 - ideal_angle)
+                sign_x = 1 if is_left_facing else -1
+                v_ideal_up = np.array([sign_x * math.sin(alpha_rad), -math.cos(alpha_rad)], dtype=np.float32)
+                v_ideal_down = -v_ideal_up
+                
+                base_len = np.linalg.norm(p0_np - p3_np)
+                midpoint = (p0_np + p3_np) / 2.0
+                
+                shift_mag = base_len * 0.28
+                shift_x = shift_mag if is_left_facing else -shift_mag
+                midpoint_shifted = midpoint + np.array([shift_x, 0], dtype=np.float32)
+                
+                p_start_ideal = midpoint_shifted - (v_ideal_down * (base_len * 0.7))
+                p_end_ideal = midpoint_shifted + (v_ideal_down * (base_len * 0.7))
+                
+                draw_angle_line(vis, p_start_ideal, p_end_ideal, (0, 255, 0), scale=1.0, thickness=6)
+            
             color = (0, 255, 0) if diff < 3 else (0, 0, 255)
-            cv2.putText(vis, f"HPA Dev: {diff:.1f}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+            cv2.putText(vis, f"Pastern: {p_angle:.1f}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 3)
+            cv2.putText(vis, f"Hoof: {h_angle:.1f}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
+            cv2.putText(vis, f"HPA Dev: {diff:.1f}", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
+            cv2.putText(vis, f"Ideal: {ideal_angle:.1f}", (20, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
             
             metrics.update({
                 "success": True,
