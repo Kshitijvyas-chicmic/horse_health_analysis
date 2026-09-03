@@ -37,11 +37,11 @@ async def get_image_bytes(image_input: str) -> bytes:
     return base64.b64decode(image_input)
 
 
-def run_leg_inference(predictor: HPAPredictor, image_bytes: bytes) -> dict:
+def run_leg_inference(predictor: HPAPredictor, image_bytes: bytes, leg_type: str = "unknown") -> dict:
     """
     MMPose inference for V4. Images are pre-cutout on mobile; never use rembg.
     """
-    return predictor.predict(image_bytes, remove_bg=False)
+    return predictor.predict(image_bytes, remove_bg=False, leg_type=leg_type)
 
 
 def process_frontal_leg_symmetry(image_bytes_original: bytes, image_bytes_processed: bytes) -> str:
@@ -101,6 +101,7 @@ def process_lateral_leg_overlay(
     predictor: HPAPredictor,
     image_bytes_original: bytes,
     image_bytes_processed: bytes,
+    leg_type: str = "unknown"
 ) -> tuple[dict, str]:
     """
     Runs HPA inference on the background-removed lateral image (processed),
@@ -119,6 +120,7 @@ def process_lateral_leg_overlay(
         image_bytes_processed,
         remove_bg=False,
         orig_img_bytes=image_bytes_original,
+        leg_type=leg_type
     )
 
     url = ""

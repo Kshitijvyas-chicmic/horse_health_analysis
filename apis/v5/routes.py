@@ -178,17 +178,18 @@ async def run_full_scan_logic(request: AdvancedScanRequest, predictor) -> Advanc
     def process_lateral_leg(leg_key: str, img_data):
         """Handles both single-image and overlay-pair lateral inference."""
         try:
+            leg_type = "front" if "front" in leg_key.lower() else ("hind" if "back" in leg_key.lower() else "unknown")
             if isinstance(img_data, tuple):
                 # Overlay mode: original + processed
                 img_orig_bytes, img_proc_bytes = img_data
-                mp, url = process_lateral_leg_overlay(predictor, img_orig_bytes, img_proc_bytes)
+                mp, url = process_lateral_leg_overlay(predictor, img_orig_bytes, img_proc_bytes, leg_type=leg_type)
             else:
                 # Single-image mode: run inference, then upload the annotated image from image_base64.
                 # image_base64 is always populated by HPAPredictor.predict(), so we can always
                 # get an output image even without a separate original image.
                 from apis.v5.services.upload import upload_image_to_s3
                 import base64 as _b64
-                mp = run_leg_inference(predictor, img_data)
+                mp = run_leg_inference(predictor, img_data, leg_type=leg_type)
                 url = ""
                 output_b64 = mp.get("image_base64")
                 if output_b64:
