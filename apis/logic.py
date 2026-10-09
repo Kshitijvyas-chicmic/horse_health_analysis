@@ -198,12 +198,13 @@ class HPAPredictor:
             h_angle = clinical_angle(angle_from_vertical(v_h))
             diff = abs(p_angle - h_angle)
             
+            avg_angle = (p_angle + h_angle) / 2.0
             if leg_type == "front":
-                ideal_angle = max(50.0, min(54.0, p_angle))
+                ideal_angle = max(50.0, min(55.0, avg_angle))
             elif leg_type == "hind":
-                ideal_angle = max(53.0, min(58.0, p_angle))
+                ideal_angle = max(53.0, min(59.0, avg_angle))
             else:
-                ideal_angle = max(50.0, min(58.0, p_angle))
+                ideal_angle = max(50.0, min(59.0, avg_angle))
             
             p0, p1, p2, p3 = keypoints[0], keypoints[1], keypoints[2], keypoints[3]
             draw_angle_line(vis, p1, p0, (0, 165, 255), scale=1.0)
@@ -220,17 +221,30 @@ class HPAPredictor:
             v_ideal_unit = np.array([dir_x * math.cos(ideal_rad), -math.sin(ideal_rad)])
             
             S_up = (p0[1] - anchor_pt[1]) / v_ideal_unit[1]
-            S_down = (p3[1] - anchor_pt[1]) / v_ideal_unit[1]
+            S_down = ((p3[1] - anchor_pt[1]) / v_ideal_unit[1]) * 1.25 # extend 25% further down to ensure it reaches bottom
             p_ideal_end = anchor_pt + v_ideal_unit * S_up
             p_ideal_start = anchor_pt + v_ideal_unit * S_down
             
             cv2.line(vis, tuple(p_ideal_start.astype(int)), tuple(p_ideal_end.astype(int)), (0, 255, 0), 3, cv2.LINE_AA)
-            cv2.putText(vis, f"Pastern: {p_angle:.1f}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 2)
-            cv2.putText(vis, f"Hoof: {h_angle:.1f}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 128, 0), 2)
+            
+            # Add semi-transparent background panel for text
+            overlay = vis.copy()
+            # Draw a white rectangle encompassing the text area
+            cv2.rectangle(overlay, (10, 10), (380, 190), (255, 255, 255), -1)
+            # Blend it to make it 40% opaque
+            cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+            
+            # Helper to draw text with a less bold, crisp outline
+            def draw_text(img, text, pos, color):
+                cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 5, cv2.LINE_AA)
+                cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_AA)
+
+            draw_text(vis, f"Pastern: {p_angle:.1f}", (20, 50), (0, 165, 255))
+            draw_text(vis, f"Hoof: {h_angle:.1f}", (20, 90), (255, 128, 0))
             
             color = (0, 255, 0) if diff < 3 else (0, 0, 255)
-            cv2.putText(vis, f"HPA Dev: {diff:.1f}", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2)
-            cv2.putText(vis, f"Ideal: {ideal_angle:.1f}", (20, 170), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+            draw_text(vis, f"HPA Dev: {diff:.1f}", (20, 130), color)
+            draw_text(vis, f"Ideal: {ideal_angle:.1f}", (20, 170), (0, 255, 0))
             
             metrics.update({
                 "success": True,

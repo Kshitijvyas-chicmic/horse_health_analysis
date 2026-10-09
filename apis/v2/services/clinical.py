@@ -171,6 +171,7 @@ async def generate_overall_recommendations(all_metrics: list) -> Optional[str]:
             "CRITICAL INSTRUCTIONS:\n"
             "- The recommendation MUST be formatted as a list of short statements, separated by new lines. Do NOT use bullet points or the '•' character.\n"
             "- Each statement must be very short and concise (e.g. 'Monitor white line separation closely.', 'Consult with a farrier for trimming adjustments.').\n"
+            "- IMPORTANT: These are just structural examples. Do NOT copy these exact examples in your output. Generate unique recommendations based on the actual metrics provided.\n"
             "- Do NOT write a paragraph. Do NOT include numerical angles.\n"
             "Return ONLY a JSON object with one key: 'recommendation'."
         )
